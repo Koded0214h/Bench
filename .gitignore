@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+venv/
+
+# Local config / secrets
+.env
+
+# Solari cookbook — reference fork, cloned locally, not part of this repo
+solari/
