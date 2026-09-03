@@ -27,6 +27,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "bench.policy" = ["*.yaml"]
+"bench.metering" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

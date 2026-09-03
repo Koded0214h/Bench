@@ -1,0 +1,25 @@
+# Bench default rate card.
+#
+# ESTIMATES for demo budgeting — NOT billed prices. Override with
+# BENCH_RATE_CARD_PATH pointing at a file with your real rates.
+
+# USD per machine-second. Solari boots microVMs in ~1s; machine time is cheap.
+machine_usd_per_second:
+  sandbox: 0.00003   # ~$0.108/hr
+  browser: 0.00006   # ~$0.216/hr
+  desktop: 0.00010   # ~$0.360/hr
+
+# Flat USD per launch. Zero by default.
+machine_launch_usd:
+  sandbox: 0.0
+  browser: 0.0
+  desktop: 0.0
+
+# LLM rates, USD per 1,000,000 tokens. Keys match by longest prefix, so
+# "claude-sonnet-5" resolves to "claude-sonnet".
+llm_usd_per_mtok:
+  claude-opus:    { input: 15.00, output: 75.00 }
+  claude-sonnet:  { input: 3.00,  output: 15.00 }
+  claude-haiku:   { input: 0.80,  output: 4.00 }
+  gemini-2-pro:   { input: 1.25,  output: 5.00 }
+  gemini-2-flash: { input: 0.30,  output: 2.50 }
