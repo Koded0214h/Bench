@@ -1,0 +1,74 @@
+# Bench default policy set — seeded by start.sh.
+#
+# Posture: default DENY (see POLICY_DEFAULT_EFFECT). Rules below carve out what
+# workers may do; add your own ALLOW rules for the domains and tools your company
+# actually uses. Evaluation is order-independent:
+#   DENY  beats  ESCALATE  beats  ALLOW  beats  AUDIT  beats  the default.
+# AUDIT permits the dispatch but flags it for the audit trail.
+
+rules:
+  # --- hard stops -------------------------------------------------------
+  - name: no-public-posting
+    match:
+      capability: browser
+      domain: [x.com, twitter.com, linkedin.com, reddit.com, facebook.com,
+               instagram.com, threads.net, mastodon.social, tiktok.com,
+               news.ycombinator.com, medium.com]
+    effect: DENY
+    reason: "Agents may not post publicly under the company identity."
+
+  - name: no-anon-upload-sites
+    match:
+      capability: browser
+      domain: [pastebin.com, ghostbin.com, transfer.sh, file.io, 0x0.st,
+               anonfiles.com, gofile.io, termbin.com]
+    effect: DENY
+    reason: "Paste and anonymous-upload sites are common exfiltration channels."
+
+  # --- needs a human --------------------------------------------------
+  - name: crm-writes-need-approval
+    match:
+      capability: browser
+      domain: salesforce.com
+      action: write
+    effect: ESCALATE
+    reason: "Human sign-off required before writing to the CRM."
+
+  - name: payments-need-approval
+    match:
+      capability: browser
+      domain: [stripe.com, paypal.com, wise.com, mercury.com, brex.com]
+    effect: ESCALATE
+    reason: "Anything touching money is reviewed by a human first."
+
+  # --- allowed, but recorded ---------------------------------------
+  - name: sandbox-egress
+    match:
+      capability: sandbox
+      network: external
+    effect: AUDIT
+    reason: "Outbound network from a sandbox is permitted but recorded."
+
+  - name: crm-reads
+    match:
+      capability: browser
+      domain: salesforce.com
+      action: read
+    effect: AUDIT
+    reason: "Reading the CRM is fine; kept in the trail for context."
+
+  # --- baseline allows -------------------------------------------
+  - name: allow-isolated-compute
+    match:
+      capability: [sandbox, desktop]
+    effect: ALLOW
+    reason: "Isolated micro-VMs; compute is permitted by default."
+
+  - name: allow-dev-reference-domains
+    match:
+      capability: browser
+      domain: [github.com, gitlab.com, pypi.org, npmjs.com, docs.python.org,
+               developer.mozilla.org, stackoverflow.com, readthedocs.io,
+               wikipedia.org]
+    effect: ALLOW
+    reason: "Reference and developer documentation."

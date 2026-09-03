@@ -13,6 +13,7 @@ dependencies = [
     "solari-browser>=0.1.3",
     "solari-sandbox>=0.2.0",
     "solari-desktop>=0.2.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"bench.policy" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
