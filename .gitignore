@@ -16,3 +16,6 @@ venv/
 # Solari cookbook — reference fork, cloned locally, not part of this repo
 # (anchored to repo root so it does not swallow tests/solari/)
 /solari/
+
+# Bench runtime state (db, audit log, static)
+/.bench/

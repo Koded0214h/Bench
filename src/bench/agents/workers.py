@@ -64,6 +64,7 @@ class Worker:
         max_tokens: int = 4096,
         on_event: OnEvent | None = None,
         on_usage: OnUsage | None = None,
+        on_machine: Callable[[Any], None] | None = None,
     ) -> None:
         self.llm = llm
         self.solari = solari
@@ -71,6 +72,7 @@ class Worker:
         self.max_tokens = max_tokens
         self._on_event = on_event
         self._on_usage = on_usage
+        self._on_machine = on_machine
 
     # subclasses implement these two
     def _launch(self, task: TaskSpec) -> Any:  # -> a handle that is a context manager
@@ -86,6 +88,12 @@ class Worker:
             handle = self._launch(task)
         except Exception as exc:  # noqa: BLE001
             return WorkerResult(task.id, WorkerStatus.FAILED, error=f"machine launch failed: {exc}")
+
+        if self._on_machine is not None:
+            try:
+                self._on_machine(handle)
+            except Exception:  # noqa: BLE001
+                pass
 
         cleanup: Callable[[], None] | None = None
         try:
@@ -154,6 +162,12 @@ class EngineeringWorker(Worker):
 
     def _build_tools(self, box: Any, task: TaskSpec):
         reg = ToolRegistry()
+        self._written: dict[str, str] = {}   # path -> content, exported as artifacts
+
+        def _write(path: str, content: str) -> dict[str, Any]:
+            box.write_text(path, content)
+            self._written[path] = content
+            return {"wrote": path, "bytes": len(content)}
 
         reg.tool(
             name="run_command",
@@ -174,7 +188,7 @@ class EngineeringWorker(Worker):
             name="write_file", description="Write (or overwrite) a UTF-8 text file in the sandbox.",
             parameters=obj_schema({"path": {"type": "string"}, "content": {"type": "string"}},
                                   required=["path", "content"]),
-        )(lambda path, content: (box.write_text(path, content), {"wrote": path, "bytes": len(content)})[1])
+        )(_write)
 
         reg.tool(
             name="read_file", description="Read a UTF-8 text file from the sandbox.",
@@ -188,6 +202,16 @@ class EngineeringWorker(Worker):
         )(lambda port: {"url": box.preview_url(int(port))})
 
         return reg, None
+
+    def _to_result(self, task: TaskSpec, run: Any) -> WorkerResult:
+        result = super()._to_result(task, run)
+        # Export the files the worker wrote so quarantine can rebuild from data.
+        existing = {a.value for a in result.artifacts if a.kind == "file"}
+        for path, content in getattr(self, "_written", {}).items():
+            if path not in existing:
+                result.artifacts.append(Artifact(kind="file", value=path, label="written",
+                                                 meta={"content": content}))
+        return result
 
 
 def _exec(box: Any, cmd: str, args: Any, cwd: Any, background: bool) -> dict[str, Any]:
