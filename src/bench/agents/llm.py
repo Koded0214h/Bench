@@ -101,15 +101,28 @@ class AnthropicLLM:
                 raise LLMError("anthropic SDK not installed: pip install anthropic") from exc
             self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
+        # Some SDK builds dropped `temperature` from messages.create(); route it
+        # through extra_body when the parameter isn't accepted directly.
+        self._temp_kwarg = True
+        try:
+            import inspect
+
+            self._temp_kwarg = "temperature" in inspect.signature(self._client.messages.create).parameters
+        except (TypeError, ValueError):  # pragma: no cover
+            pass
+
     def complete(
         self, *, messages, system=None, tools=None, max_tokens=4096, temperature=0.0,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": [_to_anthropic_message(m) for m in messages],
         }
+        if self._temp_kwarg:
+            kwargs["temperature"] = temperature
+        else:
+            kwargs["extra_body"] = {"temperature": temperature}
         if system:
             kwargs["system"] = system
         tool_specs = list(tools or [])
