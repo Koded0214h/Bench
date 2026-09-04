@@ -130,5 +130,5 @@ def test_denied_task_stops(patched, monkeypatch):
     goal.refresh_from_db()
     t = Task.objects.get(goal=goal)
     assert t.status == Task.Status.DENIED
-    assert goal.status == Goal.Status.FAILED
+    assert goal.status == Goal.Status.BLOCKED   # denied task blocks the goal, not a system failure
     assert Agent.objects.filter(kind="worker").count() == 0   # never hired
