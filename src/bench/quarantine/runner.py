@@ -75,7 +75,13 @@ class Quarantine:
                 if parent:
                     handle.exec("mkdir", args=["-p", parent])
                 handle.write_text(target, content)
-            self._emit("materialized", files=len(spec.files))
+            for rel, raw in spec.binary_files.items():
+                target = rel if rel.startswith("/") else f"{spec.workdir.rstrip('/')}/{rel}"
+                parent = target.rsplit("/", 1)[0]
+                if parent:
+                    handle.exec("mkdir", args=["-p", parent])
+                handle.write_bytes(target, raw)
+            self._emit("materialized", files=len(spec.files) + len(spec.binary_files))
 
             # 2. setup commands — a failure here short-circuits
             for cmd in spec.setup:

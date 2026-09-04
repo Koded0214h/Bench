@@ -120,6 +120,9 @@ class SandboxHandle(_BaseHandle):
     def write_text(self, path: str, data: str) -> None:
         self._run(self._sandbox.files.write(path, data))
 
+    def write_bytes(self, path: str, data: bytes) -> None:
+        self._run(self._sandbox.files.write(path, data))
+
     def read_bytes(self, path: str) -> bytes:
         return self._run(self._sandbox.files.read(path))
 

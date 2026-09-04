@@ -63,7 +63,9 @@ class FakeSandbox:
 
         class _F:
             async def read_text(self, path): return outer._files.get(path, "")
-            async def read(self, path): return outer._files.get(path, "").encode()
+            async def read(self, path):
+                v = outer._files.get(path, b"")
+                return v if isinstance(v, bytes) else v.encode()
             async def write(self, path, data, mode=None): outer._files[path] = data
 
         return _F()

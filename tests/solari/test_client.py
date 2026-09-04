@@ -31,6 +31,12 @@ def test_sandbox_exec_and_preview(client):
         assert box.snapshot().startswith("snap_")
 
 
+def test_sandbox_write_bytes_read_bytes_roundtrip(client):
+    with client.launch_sandbox() as box:
+        box.write_bytes("logo.png", b"\x89PNG-raw-bytes")
+        assert box.read_bytes("logo.png") == b"\x89PNG-raw-bytes"
+
+
 def test_sandbox_context_exit_kills_vm(client, sandbox_backend):
     with client.launch_sandbox() as box:
         pass

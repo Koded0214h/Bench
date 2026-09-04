@@ -13,6 +13,7 @@ class FakeQBox:
         self.id = "qsbx_fake"
         self.closed = False
         self.files: dict[str, str] = {}
+        self.binary_files: dict[str, bytes] = {}
         self.execs: list[tuple[str, list[str]]] = []
         self._on_exec = on_exec or (lambda cmd, args, joined: (0, "", ""))
 
@@ -30,6 +31,9 @@ class FakeQBox:
 
     def write_text(self, path, data):
         self.files[path] = data
+
+    def write_bytes(self, path, data):
+        self.binary_files[path] = data
 
     def read_text(self, path):
         if path not in self.files:

@@ -111,3 +111,17 @@ def test_run_bundle_convenience():
         checks=[HttpServesCheck("serves", ["python3", "-m", "http.server", "8000"], 8000, body_contains="Kobo")],
     )
     assert r.passed
+
+
+def test_materializes_binary_files_via_write_bytes():
+    box = FakeQBox(lambda c, a, j: (0, "16", ""))  # `wc -c` style check reports 16 bytes
+    q = Quarantine(FakeSolari(box))
+    raw = b"\x89PNG-fake-bytes"
+    spec = QuarantineSpec(
+        binary_files={"assets/icon.png": raw},
+        checks=[CommandCheck("icon present", "sh", args=["-c", "true"])],
+    )
+    r = q.run(spec)
+    assert r.passed
+    assert box.binary_files["/workspace/assets/icon.png"] == raw
+    assert ("mkdir", ["-p", "/workspace/assets"]) in box.execs

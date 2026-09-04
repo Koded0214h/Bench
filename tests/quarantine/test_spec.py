@@ -54,3 +54,31 @@ def test_spec_from_dict_round_trip():
     assert spec.workdir == "/app"
     assert isinstance(spec.checks[0], PythonCheck)
     assert spec.setup == [["pip", "install", "ruff"]]
+
+
+def test_infer_pulls_binary_content_and_adds_existence_check():
+    import base64
+
+    raw = b"\x89PNG-fake-bytes"
+    result = SimpleNamespace(artifacts=[art("image", "icon.png", content_b64=base64.b64encode(raw).decode())])
+    spec = infer_spec(result)
+    assert spec.binary_files == {"icon.png": raw}
+    names = [type(c).__name__ for c in spec.checks]
+    assert "CommandCheck" in names
+    cc = next(c for c in spec.checks if type(c).__name__ == "CommandCheck")
+    assert "icon.png" in cc.name and str(len(raw)) in cc.name
+
+
+def test_infer_binary_only_result_does_not_fail_closed():
+    import base64
+
+    result = SimpleNamespace(artifacts=[art("file", "report.pdf", content_b64=base64.b64encode(b"%PDF-x").decode())])
+    spec = infer_spec(result)
+    assert len(spec.checks) == 1   # existence check, not the "nothing to verify" dead end
+
+
+def test_spec_from_dict_round_trips_binary_files():
+    import base64
+
+    spec = QuarantineSpec.from_dict({"binary_files_b64": {"a.bin": base64.b64encode(b"xyz").decode()}})
+    assert spec.binary_files == {"a.bin": b"xyz"}
