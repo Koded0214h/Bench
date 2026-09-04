@@ -171,13 +171,39 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|#|$)/i;
 
 function ArtifactView({ a }: { a: NonNullable<Task["result"]>["artifacts"][number] }) {
   const isUrl = a.value.startsWith("http");
-  const looksLikeImage = a.kind === "image" || (isUrl && IMAGE_EXT.test(a.value));
+  const looksLikeImage = a.kind === "image" || (isUrl && IMAGE_EXT.test(a.value)) || IMAGE_EXT.test(a.value);
   const content = typeof a.meta?.content === "string" ? a.meta.content : null;
+  const b64 = typeof a.meta?.content_b64 === "string" ? a.meta.content_b64 : null;
+  const mime = typeof a.meta?.mime === "string" ? a.meta.mime : "application/octet-stream";
+  const dataUrl = b64 ? `data:${mime};base64,${b64}` : null;
+
+  // Embedded bytes beat a live sandbox URL — that URL dies with the sandbox,
+  // this survives in the database.
+  if (dataUrl && looksLikeImage) {
+    return (
+      <div>
+        <div className="muted mono" style={{ marginBottom: 4 }}>[image] {a.label || a.value}</div>
+        <a href={dataUrl} download={a.value.split("/").pop()}>
+          <img src={dataUrl} alt={a.label || "generated image"}
+               style={{ maxWidth: 320, maxHeight: 240, borderRadius: 8, border: "1px solid var(--line)" }} />
+        </a>
+      </div>
+    );
+  }
+  if (dataUrl) {
+    return (
+      <div className="mono">
+        [{a.kind}] <a href={dataUrl} download={a.value.split("/").pop()}>{a.label || a.value} ↓</a>
+      </div>
+    );
+  }
 
   if (looksLikeImage && isUrl) {
     return (
       <div>
-        <div className="muted mono" style={{ marginBottom: 4 }}>[image] {a.label || a.value}</div>
+        <div className="muted mono" style={{ marginBottom: 4 }}>
+          [image] {a.label || a.value} <span className="warn">(live preview only — expires with the sandbox)</span>
+        </div>
         <a href={a.value} target="_blank" rel="noreferrer">
           <img src={a.value} alt={a.label || "generated image"}
                style={{ maxWidth: 320, maxHeight: 240, borderRadius: 8, border: "1px solid var(--line)" }} />

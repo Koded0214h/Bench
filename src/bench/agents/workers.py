@@ -51,13 +51,15 @@ exists (a running URL, a file, a created record), call finish and report it as a
 artifact. If you get stuck, call finish with status "failed" and say why.
 Keep going until you call finish.
 
-Binary or generated assets (images, zips, anything not plain text) are useless
-as a local path — nobody can open them. Serve them: run a static server (e.g.
-`python3 -m http.server 8000`) over the directory that contains them, call
-preview_port to get the public base URL, then report each one as an artifact
-whose value is the FULL url (base url + the file's path), with kind "image" for
-pictures and kind "url" for anything else fetchable. Text files (markdown,
-html, code) are fine to report as kind "file" with just their path."""
+The sandbox and any preview_port URL are destroyed the moment you call finish —
+nothing on disk survives. For any binary deliverable (an image, a zip, anything
+not plain text) you MUST call export_file on it before finishing, or it is lost
+forever. Report it as an artifact whose value is that same path, with kind
+"image" for pictures and kind "file" otherwise. Text files (markdown, html,
+code) don't need export_file — report them as kind "file" with their path and
+they're captured automatically. preview_port is only for checking your work
+live while you're still running (e.g. does the page render) — it is not a way
+to hand off a deliverable."""
 
 
 class Worker:
@@ -170,12 +172,22 @@ class EngineeringWorker(Worker):
 
     def _build_tools(self, box: Any, task: TaskSpec):
         reg = ToolRegistry()
-        self._written: dict[str, str] = {}   # path -> content, exported as artifacts
+        self._written: dict[str, str] = {}    # path -> text content, exported as artifacts
+        self._exported: dict[str, str] = {}   # path -> base64 bytes, for binary artifacts
 
         def _write(path: str, content: str) -> dict[str, Any]:
             box.write_text(path, content)
             self._written[path] = content
             return {"wrote": path, "bytes": len(content)}
+
+        def _export(path: str) -> dict[str, Any]:
+            import base64
+
+            raw = box.read_bytes(path)
+            if len(raw) > 4_000_000:
+                return {"error": f"{path} is {len(raw)} bytes — too large to export (max 4MB)"}
+            self._exported[path] = base64.b64encode(raw).decode("ascii")
+            return {"exported": path, "bytes": len(raw)}
 
         reg.tool(
             name="run_command",
@@ -205,9 +217,19 @@ class EngineeringWorker(Worker):
 
         reg.tool(
             name="preview_port",
-            description="Expose a port the sandbox is listening on and return a public URL.",
+            description="Expose a port the sandbox is listening on and return a public URL. NOTE: this URL "
+            "only works while the sandbox is alive — it goes dead the moment the task ends. Use it to verify "
+            "things while you work, but call export_file on any deliverable binary/image so it survives.",
             parameters=obj_schema({"port": {"type": "integer"}}, required=["port"]),
         )(lambda port: {"url": box.preview_url(int(port))})
+
+        reg.tool(
+            name="export_file",
+            description="Read a file's bytes so it is saved permanently as part of your result — required "
+            "for any binary deliverable (an image, a zip, ...) since the sandbox and its preview URL are "
+            "destroyed when you finish. Max 4MB. Then report it as an artifact with this same path as the value.",
+            parameters=obj_schema({"path": {"type": "string"}}, required=["path"]),
+        )(_export)
 
         return reg, None
 
@@ -233,7 +255,47 @@ class EngineeringWorker(Worker):
             if path not in existing:
                 result.artifacts.append(Artifact(kind="file", value=path, label="written",
                                                  meta={"content": content}))
+
+        # Attach exported bytes to any artifact that references that file (by
+        # path or, since artifacts often report a full preview URL, by
+        # basename) — this is what lets a binary asset survive the sandbox.
+        exported: dict[str, str] = getattr(self, "_exported", {})
+        matched: set[str] = set()
+        for art in result.artifacts:
+            for path, b64 in exported.items():
+                if path == art.value or _basename(path) in str(art.value):
+                    art.meta = {**art.meta, "content_b64": b64, "mime": _guess_mime(path)}
+                    matched.add(path)
+                    break
+        # An exported file the model never referenced in an artifact still
+        # ships — better an unlabeled extra than a deliverable silently lost.
+        for path, b64 in exported.items():
+            if path not in matched:
+                result.artifacts.append(Artifact(
+                    kind="image" if _guess_mime(path).startswith("image/") else "file",
+                    value=path, label="exported",
+                    meta={"content_b64": b64, "mime": _guess_mime(path)},
+                ))
         return result
+
+
+def _basename(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+_MIME_BY_EXT = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp",
+    ".pdf": "application/pdf", ".zip": "application/zip", ".json": "application/json",
+    ".txt": "text/plain", ".md": "text/markdown", ".html": "text/html", ".csv": "text/csv",
+}
+
+
+def _guess_mime(path: str) -> str:
+    for ext, mime in _MIME_BY_EXT.items():
+        if path.lower().endswith(ext):
+            return mime
+    return "application/octet-stream"
 
 
 def _exec(box: Any, cmd: str, args: Any, cwd: Any, background: bool) -> dict[str, Any]:

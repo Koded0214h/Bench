@@ -106,3 +106,63 @@ def test_build_worker_picks_class_by_capability():
     assert isinstance(build_worker(ENG_TASK, llm, solari), EngineeringWorker)
     browser_task = TaskSpec(title="x", capability="browser", instructions="y", success_criteria=["z"])
     assert isinstance(build_worker(browser_task, llm, solari, toolset_factory=FakeToolset), OpsWorker)
+
+
+def test_export_file_embeds_bytes_on_matching_artifact():
+    solari2 = FakeSolari()
+    llm2 = FakeLLM([
+        call("export_file", {"path": "logo.png"}),
+        call("finish", {
+            "status": "done", "summary": "made a logo",
+            "artifacts": [{"kind": "image", "value": "https://sbx-8000.preview.getsolari.com/logo.png?t=x",
+                           "label": "logo"}],
+        }),
+    ])
+    worker = EngineeringWorker(llm2, solari2, max_steps=8)
+
+    # seed bytes on the box the worker is about to launch
+    real_launch = worker._launch
+    def launch_with_bytes(task):
+        box = real_launch(task)
+        box.binary_files["logo.png"] = b"\x89PNG-not-real-but-bytes"
+        return box
+    worker._launch = launch_with_bytes
+
+    result2 = worker.run(ENG_TASK)
+    art = next(a for a in result2.artifacts if a.kind == "image")
+    assert art.meta["mime"] == "image/png"
+    import base64
+    assert base64.b64decode(art.meta["content_b64"]) == b"\x89PNG-not-real-but-bytes"
+
+
+def test_export_file_too_large_is_reported_not_crashed():
+    solari = FakeSolari()
+    llm = FakeLLM([call("export_file", {"path": "huge.bin"}),
+                   call("finish", {"status": "failed", "summary": "file too big"})])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+    def launch_with_huge(task):
+        box = real_launch(task)
+        box.binary_files["huge.bin"] = b"x" * (5 * 1024 * 1024)
+        return box
+    worker._launch = launch_with_huge
+
+    result = worker.run(ENG_TASK)
+    assert result.status is WorkerStatus.FAILED  # model saw the error tool result and gave up cleanly
+
+
+def test_unreferenced_exported_file_still_ships_as_artifact():
+    solari = FakeSolari()
+    llm = FakeLLM([call("export_file", {"path": "report.pdf"}),
+                   call("finish", {"status": "done", "summary": "done", "artifacts": []})])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+    def launch_with_pdf(task):
+        box = real_launch(task)
+        box.binary_files["report.pdf"] = b"%PDF-fake"
+        return box
+    worker._launch = launch_with_pdf
+
+    result = worker.run(ENG_TASK)
+    art = next(a for a in result.artifacts if a.value == "report.pdf")
+    assert art.kind == "file" and art.meta["mime"] == "application/pdf"

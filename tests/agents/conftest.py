@@ -33,6 +33,7 @@ class FakeSandboxHandle:
         self.closed = False
         self.commands: list[str] = []
         self.files: dict[str, str] = {}
+        self.binary_files: dict[str, bytes] = {}   # pre-seed for read_bytes in tests
 
     def __enter__(self):
         return self
@@ -52,6 +53,9 @@ class FakeSandboxHandle:
 
     def read_text(self, path):
         return self.files.get(path, "")
+
+    def read_bytes(self, path):
+        return self.binary_files.get(path, b"")
 
     def preview_url(self, port):
         return f"https://sbx_fake-{port}.preview.getsolari.com"
