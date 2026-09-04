@@ -289,17 +289,148 @@ class FakeLLM:
 
 
 # --------------------------------------------------------------------------
+# OpenAI-compatible /chat/completions (Groq, OpenRouter, Cerebras, Ollama, …)
+# --------------------------------------------------------------------------
+
+class OpenAICompatLLM:
+    """Any endpoint that speaks OpenAI's ``/chat/completions`` with tool calling.
+
+    Works with free providers: Groq, OpenRouter (``:free`` models), Cerebras,
+    and a local Ollama / LM Studio. Uses raw httpx — no ``openai`` package.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str,
+        api_key: str | None = None,
+        timeout_s: float = 120.0,
+        client: Any = None,
+    ) -> None:
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        if client is not None:
+            self._client = client
+        else:
+            import httpx
+
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            self._client = httpx.Client(base_url=self.base_url, timeout=timeout_s, headers=headers)
+
+    def complete(self, *, messages, system=None, tools=None, max_tokens=4096, temperature=0.0) -> LLMResponse:
+        wire: list[dict[str, Any]] = []
+        if system:
+            wire.append({"role": "system", "content": system})
+        for m in messages:
+            wire.append(_to_openai_message(m))
+
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": wire,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        tool_specs = list(tools or [])
+        if tool_specs:
+            body["tools"] = [
+                {"type": "function",
+                 "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
+                for t in tool_specs
+            ]
+            body["tool_choice"] = "auto"
+
+        try:
+            resp = self._client.post("/chat/completions", json=body)
+        except Exception as exc:  # noqa: BLE001
+            raise LLMError(f"{self.base_url} call failed: {exc}") from exc
+        if resp.status_code >= 400:
+            raise LLMError(f"{self.base_url} returned {resp.status_code}: {resp.text[:400]}")
+
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message", {}) or {}
+        calls: list[ToolCall] = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            raw = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except json.JSONDecodeError:
+                args = {"_raw": raw}
+            calls.append(ToolCall(id=tc.get("id") or fn.get("name", "call"), name=fn.get("name", ""), arguments=args))
+
+        usage_raw = data.get("usage") or {}
+        finish = choice.get("finish_reason") or ("tool_calls" if calls else "stop")
+        return LLMResponse(
+            text=(msg.get("content") or "").strip(),
+            tool_calls=tuple(calls),
+            usage=Usage(usage_raw.get("prompt_tokens", 0) or 0, usage_raw.get("completion_tokens", 0) or 0),
+            stop_reason={"tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens"}.get(finish, finish),
+            raw=data,
+        )
+
+
+def _to_openai_message(m: Message) -> dict[str, Any]:
+    if m.role == "tool":
+        return {"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content}
+    if m.role == "assistant" and m.tool_calls:
+        return {
+            "role": "assistant",
+            "content": m.content or None,
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+                for tc in m.tool_calls
+            ],
+        }
+    return {"role": m.role, "content": m.content}
+
+
+# --------------------------------------------------------------------------
 # Factory
 # --------------------------------------------------------------------------
 
+# provider -> (base_url, api-key env var, default free model)
+_PROVIDERS = {
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "meta-llama/llama-3.3-70b-instruct:free"),
+    "cerebras": ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "llama-3.3-70b"),
+    "ollama": ("http://localhost:11434/v1", "", "llama3.1"),
+    "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o-mini"),
+}
+
+
 def llm_from_env(model: str | None = None, **kwargs: Any) -> LLMClient:
-    model = model or os.environ.get("BENCH_LLM_MODEL", "claude-sonnet-5")
+    provider = (os.environ.get("BENCH_LLM_PROVIDER") or "").strip().lower()
+    model = model or os.environ.get("BENCH_LLM_MODEL") or ""
+
+    # explicit OpenAI-compatible endpoint
+    base_url = os.environ.get("BENCH_LLM_BASE_URL")
+    if provider in _PROVIDERS or base_url:
+        if provider in _PROVIDERS:
+            default_base, key_var, default_model = _PROVIDERS[provider]
+            base_url = base_url or default_base
+            api_key = os.environ.get("BENCH_LLM_API_KEY") or (os.environ.get(key_var) if key_var else None)
+            model = model or default_model
+        else:
+            api_key = os.environ.get("BENCH_LLM_API_KEY")
+            model = model or "gpt-4o-mini"
+        return OpenAICompatLLM(model, base_url=base_url, api_key=api_key, **kwargs)
+
+    model = model or "claude-sonnet-5"
     lowered = model.lower()
-    if lowered.startswith(("claude", "anthropic")):
+    if provider == "anthropic" or lowered.startswith(("claude", "anthropic")):
         return AnthropicLLM(model, **kwargs)
-    if lowered.startswith(("gemini", "google")):
+    if provider == "gemini" or lowered.startswith(("gemini", "google")):
         return GeminiLLM(model, **kwargs)
-    raise LLMError(f"cannot infer provider for model {model!r}; use AnthropicLLM/GeminiLLM directly")
+    raise LLMError(
+        f"cannot infer a provider for model {model!r}. Set BENCH_LLM_PROVIDER "
+        f"(one of: {', '.join(sorted(_PROVIDERS))}, anthropic, gemini)."
+    )
 
 
 def tool_result_text(value: Any) -> str:
@@ -310,5 +441,5 @@ def tool_result_text(value: Any) -> str:
 
 __all__ = [
     "LLMClient", "LLMResponse", "Message", "ToolSpec", "ToolCall", "Usage", "LLMError",
-    "AnthropicLLM", "GeminiLLM", "FakeLLM", "llm_from_env",
+    "AnthropicLLM", "GeminiLLM", "OpenAICompatLLM", "FakeLLM", "llm_from_env",
 ]

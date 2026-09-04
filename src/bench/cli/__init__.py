@@ -24,6 +24,19 @@ def load_dotenv(path: str | os.PathLike[str] | None = None) -> None:
         os.environ.setdefault(key, value)
 
 
+def llm_is_configured() -> bool:
+    """True when some LLM provider can be reached (any known key, or a local
+    endpoint / Ollama)."""
+
+    keys = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
+            "CEREBRAS_API_KEY", "OPENAI_API_KEY", "BENCH_LLM_API_KEY")
+    if any(os.environ.get(k) for k in keys):
+        return True
+    if os.environ.get("BENCH_LLM_BASE_URL"):
+        return True
+    return os.environ.get("BENCH_LLM_PROVIDER", "").strip().lower() == "ollama"
+
+
 def setup_django() -> None:
     import sys
 
@@ -36,4 +49,4 @@ def setup_django() -> None:
     django.setup()
 
 
-__all__ = ["load_dotenv", "setup_django", "REPO_ROOT"]
+__all__ = ["load_dotenv", "setup_django", "llm_is_configured", "REPO_ROOT"]

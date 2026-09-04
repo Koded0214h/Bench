@@ -32,6 +32,7 @@ from .llm import (
     AnthropicLLM,
     FakeLLM,
     GeminiLLM,
+    OpenAICompatLLM,
     LLMClient,
     LLMError,
     LLMResponse,
@@ -58,7 +59,7 @@ from .workers import EngineeringWorker, OpsWorker, ResearchWorker, Worker, build
 __all__ = [
     # llm
     "LLMClient", "LLMResponse", "Message", "ToolSpec", "ToolCall", "Usage", "LLMError",
-    "AnthropicLLM", "GeminiLLM", "FakeLLM", "llm_from_env",
+    "AnthropicLLM", "GeminiLLM", "OpenAICompatLLM", "FakeLLM", "llm_from_env",
     # loop / tools
     "run_agent", "AgentRun", "AgentEvent", "StopReason",
     "Tool", "ToolRegistry", "ToolResult", "obj_schema",

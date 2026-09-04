@@ -12,7 +12,7 @@ import argparse
 import os
 import sys
 
-from bench.cli import load_dotenv, setup_django
+from bench.cli import llm_is_configured, load_dotenv, setup_django
 
 B, G, Y, R, D, X = "\033[34m", "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
 
@@ -41,8 +41,9 @@ def main(argv: list[str] | None = None) -> int:
     if not os.environ.get("SOLARI_API_KEY"):
         print(f"{R}SOLARI_API_KEY is not set (add it to .env).{X}")
         return 2
-    if not args.fake and not os.environ.get("ANTHROPIC_API_KEY"):
-        print(f"{R}ANTHROPIC_API_KEY is not set. Use --fake for a wiring run without an LLM.{X}")
+    if not args.fake and not llm_is_configured():
+        print(f"{R}No LLM configured. Set an API key (ANTHROPIC_API_KEY, GEMINI_API_KEY, "
+              f"GROQ_API_KEY, …) or BENCH_LLM_PROVIDER, or use --fake.{X}")
         return 2
 
     setup_django()

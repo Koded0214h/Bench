@@ -93,7 +93,93 @@ def test_anthropic_llm_wraps_errors():
 
 
 def test_llm_from_env_infers_provider(monkeypatch):
+    for v in ("BENCH_LLM_PROVIDER", "BENCH_LLM_BASE_URL", "BENCH_LLM_MODEL", "GROQ_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert isinstance(llm_from_env("claude-sonnet-5"), AnthropicLLM)
     with pytest.raises(LLMError):
-        llm_from_env("gpt-4o")
+        llm_from_env("mystery-model")
+
+
+# --- OpenAI-compatible client ------------------------------------------
+
+class _FakeHttp:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self._status = status
+        self.last = None
+
+    def post(self, path, json):
+        self.last = {"path": path, "body": json}
+        import json as _j
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status_code=self._status, json=lambda: self._payload,
+                               text=_j.dumps(self._payload))
+
+
+def test_openai_compat_parses_text_and_tools():
+    from bench.agents import OpenAICompatLLM
+
+    payload = {
+        "choices": [{
+            "message": {
+                "content": "on it",
+                "tool_calls": [{"id": "call_1", "function": {"name": "run_command",
+                                                             "arguments": '{"cmd": "ls"}'}}],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 5},
+    }
+    http = _FakeHttp(payload)
+    llm = OpenAICompatLLM("llama-3.3-70b", base_url="https://api.groq.com/openai/v1", client=http)
+    r = llm.complete(
+        messages=[Message("user", "list files")],
+        system="be terse",
+        tools=[ToolSpec("run_command", "run", {"type": "object", "properties": {}})],
+    )
+    assert r.text == "on it"
+    assert r.tool_calls[0].name == "run_command" and r.tool_calls[0].arguments == {"cmd": "ls"}
+    assert r.usage == Usage(12, 5) and r.stop_reason == "tool_use"
+    sent = http.last["body"]
+    assert sent["messages"][0] == {"role": "system", "content": "be terse"}
+    assert sent["tools"][0]["function"]["name"] == "run_command"
+
+
+def test_openai_compat_bad_tool_json_becomes_raw():
+    from bench.agents import OpenAICompatLLM
+
+    payload = {"choices": [{"message": {"content": "",
+               "tool_calls": [{"id": "c1", "function": {"name": "x", "arguments": "not json"}}]},
+               "finish_reason": "tool_calls"}], "usage": {}}
+    llm = OpenAICompatLLM("m", base_url="http://x/v1", client=_FakeHttp(payload))
+    r = llm.complete(messages=[Message("user", "go")])
+    assert r.tool_calls[0].arguments == {"_raw": "not json"}
+
+
+def test_openai_compat_http_error_wrapped():
+    from bench.agents import OpenAICompatLLM
+
+    llm = OpenAICompatLLM("m", base_url="http://x/v1", client=_FakeHttp({"error": "nope"}, status=401))
+    with pytest.raises(LLMError):
+        llm.complete(messages=[Message("user", "go")])
+
+
+def test_llm_from_env_openai_compat_routing(monkeypatch):
+    from bench.agents import OpenAICompatLLM
+
+    for v in ("ANTHROPIC_API_KEY", "BENCH_LLM_BASE_URL", "BENCH_LLM_MODEL"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("BENCH_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    llm = llm_from_env()
+    assert isinstance(llm, OpenAICompatLLM)
+    assert llm.base_url == "https://api.groq.com/openai/v1"
+    assert llm.model == "llama-3.3-70b-versatile"
+
+    monkeypatch.setenv("BENCH_LLM_PROVIDER", "")
+    monkeypatch.setenv("BENCH_LLM_BASE_URL", "http://localhost:1234/v1")
+    monkeypatch.setenv("BENCH_LLM_MODEL", "local-model")
+    llm2 = llm_from_env()
+    assert isinstance(llm2, OpenAICompatLLM) and llm2.model == "local-model"
