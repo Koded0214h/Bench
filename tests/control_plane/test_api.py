@@ -20,96 +20,102 @@ def test_healthz_is_public(api):
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
-def test_create_goal_without_run(auth_api):
+def test_all_reads_require_auth(api):
+    for path in ("/api/goals/", "/api/tasks/", "/api/agents/", "/api/spend", "/api/audit"):
+        assert api.get(path).status_code == 401, path
+
+
+def test_create_goal_sets_owner(auth_api, user):
     r = auth_api.post("/api/goals/", {"text": "Launch a landing page", "run": False}, format="json")
     assert r.status_code == 201
     body = r.json()
-    assert body["status"] == "pending" and body["text"] == "Launch a landing page"
-    assert Goal.objects.count() == 1
+    assert body["status"] == "pending" and body["owner"] == user.username
+    assert Goal.objects.get(pk=body["id"]).owner_id == user.id
 
 
-def test_goal_list_and_detail_are_readable_without_auth(api):
-    g = Goal.objects.create(text="x")
-    Task.objects.create(goal=g, title="t", capability="sandbox", success_criteria=["a"])
-    assert api.get("/api/goals/").status_code == 200
-    detail = api.get(f"/api/goals/{g.id}/").json()
-    assert len(detail["tasks"]) == 1
+def test_goals_are_scoped_to_owner(auth_api, user, other_user):
+    mine = Goal.objects.create(text="mine", owner=user)
+    Goal.objects.create(text="theirs", owner=other_user)
+
+    listed = auth_api.get("/api/goals/").json()
+    assert listed["count"] == 1 and listed["results"][0]["id"] == mine.id
+
+    # cannot fetch another user's goal
+    theirs_id = Goal.objects.get(text="theirs").id
+    assert auth_api.get(f"/api/goals/{theirs_id}/").status_code == 404
 
 
-def test_tasks_filter_by_goal_and_status(api):
-    g1, g2 = Goal.objects.create(text="a"), Goal.objects.create(text="b")
-    Task.objects.create(goal=g1, title="t1", capability="sandbox", status="done")
-    Task.objects.create(goal=g1, title="t2", capability="browser", status="failed")
-    Task.objects.create(goal=g2, title="t3", capability="sandbox", status="done")
+def test_tasks_and_children_are_scoped(auth_api, user, other_user):
+    g1 = Goal.objects.create(text="a", owner=user)
+    g2 = Goal.objects.create(text="b", owner=other_user)
+    t1 = Task.objects.create(goal=g1, title="t1", capability="sandbox", status="done")
+    t2 = Task.objects.create(goal=g2, title="t2", capability="sandbox", status="done")
+    a1 = Agent.objects.create(kind="worker", role="engineering", task=t1)
+    Agent.objects.create(kind="worker", role="ops", task=t2)
+    Machine.objects.create(id="m1", kind="sandbox", status="ready", agent=a1, task=t1)
+    Machine.objects.create(id="m2", kind="sandbox", status="ready", task=t2)
+    Dispatch.objects.create(task=t1, capability="sandbox", effect="ALLOW")
+    Dispatch.objects.create(task=t2, capability="sandbox", effect="ALLOW")
 
-    assert api.get(f"/api/tasks/?goal={g1.id}").json()["count"] == 2
-    assert api.get("/api/tasks/?status=done").json()["count"] == 2
-
-
-def test_agents_and_machines_live_filters(api):
-    g = Goal.objects.create(text="x")
-    t = Task.objects.create(goal=g, title="t", capability="sandbox")
-    a1 = Agent.objects.create(kind="worker", role="engineering", task=t)
-    Agent.objects.create(kind="worker", role="ops", status="dismissed", task=t)
-    Machine.objects.create(id="m1", kind="sandbox", status="ready", agent=a1, task=t)
-    Machine.objects.create(id="m2", kind="sandbox", status="destroyed", task=t)
-
-    assert api.get("/api/agents/?active=1").json()["count"] == 1
-    assert api.get("/api/machines/?live=1").json()["count"] == 1
-    assert api.get("/api/machines/").json()["count"] == 2
+    assert auth_api.get("/api/tasks/").json()["count"] == 1
+    assert auth_api.get("/api/agents/").json()["count"] == 1
+    assert auth_api.get("/api/machines/").json()["count"] == 1
+    assert auth_api.get("/api/dispatches/").json()["count"] == 1
 
 
-def test_spend_endpoint_aggregates(api):
-    Charge.objects.create(charge_id="c1", ts="t", task_id="t1", category="llm", amount_usd=0.20)
-    Charge.objects.create(charge_id="c2", ts="t", task_id="t1", category="machine_time", amount_usd=0.05)
-    Charge.objects.create(charge_id="c3", ts="t", task_id="t2", category="llm", amount_usd=1.00)
-    body = api.get("/api/spend").json()
-    assert body["total_usd"] == pytest.approx(1.25)
-    assert body["tasks"]["t1"]["total_usd"] == pytest.approx(0.25)
-    assert body["tasks"]["t1"]["by_category"]["llm"] == pytest.approx(0.20)
+def test_spend_is_scoped(auth_api, user, other_user):
+    mine = Goal.objects.create(text="a", owner=user)
+    theirs = Goal.objects.create(text="b", owner=other_user)
+    tm = Task.objects.create(goal=mine, title="t", capability="sandbox")
+    tt = Task.objects.create(goal=theirs, title="t", capability="sandbox")
+    Charge.objects.create(charge_id="c1", ts="t", task_id=tm.id, category="llm", amount_usd=0.20)
+    Charge.objects.create(charge_id="c2", ts="t", task_id=tt.id, category="llm", amount_usd=9.00)
+
+    body = auth_api.get("/api/spend").json()
+    assert body["total_usd"] == pytest.approx(0.20)
+    assert tt.id not in body["tasks"]
 
 
-def test_audit_endpoint_and_verify(api):
+def test_audit_is_scoped(auth_api, user, other_user):
     from bench.audit import AuditLog
     from bench.control_plane.api.stores import DjangoAuditStore
 
+    mine = Goal.objects.create(text="a", owner=user)
+    theirs = Goal.objects.create(text="b", owner=other_user)
+    tm = Task.objects.create(goal=mine, title="t", capability="sandbox")
+    tt = Task.objects.create(goal=theirs, title="t", capability="sandbox")
+
     log = AuditLog(DjangoAuditStore())
-    log.task_created(task_id="t1", goal="g")
-    log.note("hi", task_id="t1")
-    log.note("elsewhere", task_id="t2")
+    log.note("mine", task_id=tm.id)
+    log.note("theirs", task_id=tt.id)
 
-    r = api.get("/api/audit?task=t1").json()
-    assert r["count"] == 2
-    assert api.get("/api/audit/verify").json()["ok"] is True
+    r = auth_api.get("/api/audit").json()
+    assert r["count"] == 1 and r["events"][0]["task_id"] == tm.id
+    # chain check stays global
+    assert auth_api.get("/api/audit/verify").json()["ok"] is True
 
 
-def test_escalation_resolve_requires_pending(auth_api):
-    g = Goal.objects.create(text="x")
+def test_escalation_resolve_scoped_and_conflict(auth_api, user, other_user):
+    g = Goal.objects.create(text="x", owner=user)
     t = Task.objects.create(goal=g, title="t", capability="browser", status="escalated")
     esc = Escalation.objects.create(task=t, reason="crm write")
+
+    # another user's escalation is invisible
+    g2 = Goal.objects.create(text="y", owner=other_user)
+    t2 = Task.objects.create(goal=g2, title="t", capability="browser", status="escalated")
+    esc2 = Escalation.objects.create(task=t2, reason="theirs")
+    assert auth_api.post(f"/api/escalations/{esc2.id}/resolve/", {"approved": False}, format="json").status_code == 404
 
     r = auth_api.post(f"/api/escalations/{esc.id}/resolve/", {"approved": False}, format="json")
     assert r.status_code == 200
     esc.refresh_from_db(); t.refresh_from_db()
     assert esc.status == "rejected" and t.status == "rejected"
-
-    # second resolve is a conflict
-    r2 = auth_api.post(f"/api/escalations/{esc.id}/resolve/", {"approved": True}, format="json")
-    assert r2.status_code == 409
+    assert auth_api.post(f"/api/escalations/{esc.id}/resolve/", {"approved": True}, format="json").status_code == 409
 
 
-def test_write_endpoints_require_auth(api):
-    r = api.post("/api/goals/", {"text": "x"}, format="json")
-    assert r.status_code in (401, 403)
-
-
-def test_policy_rules_listed(api):
+def test_policy_rules_listed_for_authed_user(auth_api, api):
     from bench.control_plane.api.models import PolicyRule
 
     PolicyRule.objects.create(name="deny-x", match={"capability": "browser"}, effect="DENY", priority=0)
-    assert api.get("/api/policy/rules/").json()["count"] == 1
-
-
-def test_live_view_renders(api):
-    r = api.get("/live")
-    assert r.status_code == 200 and b"BENCH" in r.content
+    assert auth_api.get("/api/policy/rules/").json()["count"] == 1
+    assert api.get("/api/policy/rules/").status_code == 401

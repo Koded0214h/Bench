@@ -19,3 +19,7 @@ venv/
 
 # Bench runtime state (db, audit log, static)
 /.bench/
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/

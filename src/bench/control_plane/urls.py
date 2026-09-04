@@ -1,10 +1,25 @@
 from __future__ import annotations
 
-from django.urls import include, path
+from django.conf import settings
+from django.http import FileResponse, Http404, HttpResponseRedirect
+from django.urls import include, path, re_path
+from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from bench.control_plane.api import views
+from bench.control_plane.api.auth import MeView, RegisterView
+
+
+def spa_index(request, *args, **kwargs):
+    index = settings.FRONTEND_DIST / "index.html"
+    if not index.exists():
+        raise Http404("frontend not built — run: cd frontend && npm install && npm run build")
+    return FileResponse(open(index, "rb"))
+
+
+def spa_asset(request, path):
+    return serve(request, path, document_root=settings.FRONTEND_DIST / "assets")
 
 router = DefaultRouter()
 router.register("goals", views.GoalViewSet, basename="goal")
@@ -23,6 +38,12 @@ urlpatterns = [
     path("api/audit", views.AuditView.as_view()),
     path("api/audit/verify", views.AuditVerifyView.as_view()),
     path("api/spend", views.SpendView.as_view()),
+    path("api/auth/register", RegisterView.as_view()),
     path("api/auth/token", TokenObtainPairView.as_view()),
     path("api/auth/token/refresh", TokenRefreshView.as_view()),
+    path("api/auth/me", MeView.as_view()),
+    # built React app
+    re_path(r"^app/assets/(?P<path>.*)$", spa_asset),
+    re_path(r"^app/.*$", spa_index),
+    path("", lambda r: HttpResponseRedirect("/app/")),
 ]

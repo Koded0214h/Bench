@@ -18,11 +18,12 @@ class TaskSerializer(serializers.ModelSerializer):
 
 class GoalSerializer(serializers.ModelSerializer):
     tasks = TaskSerializer(many=True, read_only=True)
+    owner = serializers.CharField(source="owner.username", read_only=True, default=None)
 
     class Meta:
         model = Goal
-        fields = ["id", "text", "status", "notes", "error", "created_at", "updated_at", "tasks"]
-        read_only_fields = ["id", "status", "notes", "error", "created_at", "updated_at", "tasks"]
+        fields = ["id", "owner", "text", "status", "notes", "error", "created_at", "updated_at", "tasks"]
+        read_only_fields = fields
 
 
 class GoalCreateSerializer(serializers.Serializer):

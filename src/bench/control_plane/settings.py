@@ -75,6 +75,11 @@ DATABASES = {"default": _database()}
 
 AUTH_PASSWORD_VALIDATORS: list = []
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+import sys as _sys  # noqa: E402
+
+if "pytest" in _sys.modules:  # fast password hashing under the test suite
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 USE_TZ = True
 TIME_ZONE = "UTC"
 LANGUAGE_CODE = "en-us"
@@ -82,16 +87,26 @@ LANGUAGE_CODE = "en-us"
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / ".bench" / "static"
 
+# Built React app (frontend/dist), served at /app/ so the whole thing is on :8000.
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+}
+
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=12),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
 }
 
 CORS_ALLOW_ALL_ORIGINS = DEBUG

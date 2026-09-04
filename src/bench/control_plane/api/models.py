@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -43,6 +44,8 @@ class Goal(models.Model):
         BLOCKED = "blocked"
 
     id = models.CharField(primary_key=True, max_length=40, default=goal_id, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="goals",
+                              on_delete=models.CASCADE, null=True)
     text = models.TextField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(blank=True, default="")
