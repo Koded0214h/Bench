@@ -15,7 +15,11 @@ def spa_index(request, *args, **kwargs):
     index = settings.FRONTEND_DIST / "index.html"
     if not index.exists():
         raise Http404("frontend not built — run: cd frontend && npm install && npm run build")
-    return FileResponse(open(index, "rb"))
+    resp = FileResponse(open(index, "rb"))
+    # The HTML references hashed asset filenames; never let a stale index.html
+    # (which would point at a JS bundle that no longer exists) survive a rebuild.
+    resp["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 def spa_asset(request, path):
