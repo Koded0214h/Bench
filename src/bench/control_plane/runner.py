@@ -77,27 +77,27 @@ def _spec_from_row(row: Task) -> TaskSpec:
     )
 
 
-def _make_orchestrator(goal: Goal, solari) -> Orchestrator:
+def _make_orchestrator(goal: Goal, solari, sink) -> Orchestrator:
     return Orchestrator(
         llm=_llm(), solari=solari,
         policy=build_policy_engine(),
         meter=Meter.from_env(on_charge=record_charge),
         audit=AuditLog(DjangoAuditStore()),
         quarantine=Quarantine.from_env(solari),
-        sink=DjangoSink(goal),
+        sink=sink,
         config=OrchestrationConfig.from_env(),
     )
 
 
 # --------------------------------------------------------------------------
 
-def run_goal(goal_id: str) -> None:
+def run_goal(goal_id: str, *, sink_factory=DjangoSink) -> None:
     goal = Goal.objects.get(pk=goal_id)
     goal.status = Goal.Status.RUNNING
     goal.save(update_fields=["status", "updated_at"])
 
     with SolariClient.from_env(launch_timeout_s=150) as solari:
-        orch = _make_orchestrator(goal, solari)
+        orch = _make_orchestrator(goal, solari, sink_factory(goal))
         run = orch.run(goal.text, goal_id=goal.id)
 
     goal.refresh_from_db()
@@ -119,7 +119,7 @@ def resume_after_escalation(escalation_id: str) -> None:
     audit.escalation_resolved(task_id=row.id, approved=True, by=esc.resolved_by or "human")
 
     with SolariClient.from_env(launch_timeout_s=150) as solari:
-        orch = _make_orchestrator(goal, solari)
+        orch = _make_orchestrator(goal, solari, DjangoSink(goal))
         # The human approved the escalation — skip the policy gate this time.
         outcome = orch.run_task(spec, skip_policy=True)
 

@@ -22,6 +22,9 @@ dependencies = [
     "django-cors-headers>=4.4",
 ]
 
+[project.scripts]
+bench-run = "bench.run.__main__:main"
+
 [project.optional-dependencies]
 gemini = [
     "google-genai>=0.3",
