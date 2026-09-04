@@ -172,6 +172,7 @@ class EngineeringWorker(Worker):
 
     def _build_tools(self, box: Any, task: TaskSpec):
         reg = ToolRegistry()
+        self._box = box                       # kept for the auto-capture safety net below
         self._written: dict[str, str] = {}    # path -> text content, exported as artifacts
         self._exported: dict[str, str] = {}   # path -> base64 bytes, for binary artifacts
 
@@ -233,8 +234,76 @@ class EngineeringWorker(Worker):
 
         return reg, None
 
+    _AUTO_CAPTURE_SKIP_DIRS = ("./node_modules/*", "./.git/*", "./__pycache__/*",
+                              "./venv/*", "./.venv/*", "./dist/*", "./build/*", "./.next/*")
+    _AUTO_CAPTURE_MAX_FILES = 30
+    _AUTO_CAPTURE_MAX_TOTAL_BYTES = 2_000_000
+
+    def _auto_capture(self) -> None:
+        """List what's actually in the sandbox and capture anything the model
+        produced without going through write_file/export_file, so quarantine
+        always has something real to rebuild from — never just the model's
+        word for what it did."""
+
+        box = getattr(self, "_box", None)
+        if box is None:
+            return
+        try:
+            find_args = [".", "-maxdepth", "3", "-type", "f"]
+            for pattern in self._AUTO_CAPTURE_SKIP_DIRS:
+                find_args += ["-not", "-path", pattern]
+            r = box.exec("find", args=find_args)
+            if getattr(r, "exitCode", getattr(r, "exit_code", 1)) != 0:
+                return
+            paths = [p[2:] if p.startswith("./") else p
+                    for p in (r.stdout or "").splitlines() if p.strip()]
+        except Exception:  # noqa: BLE001 - best-effort; never break a result over this
+            return
+
+        import base64
+
+        total = 0
+        captured = 0
+        for path in sorted(paths):
+            if captured >= self._AUTO_CAPTURE_MAX_FILES or total >= self._AUTO_CAPTURE_MAX_TOTAL_BYTES:
+                break
+            if path in self._written or path in self._exported:
+                continue
+            if path.endswith((".pyc", ".pyo", ".log")):
+                continue
+
+            as_binary = path.lower().endswith(_BINARY_EXTENSIONS)
+            try:
+                if not as_binary:
+                    try:
+                        text = box.read_text(path)
+                    except (UnicodeDecodeError, ValueError):
+                        as_binary = True  # not valid UTF-8 -> it's binary regardless of extension
+                    else:
+                        if "�" in text or len(text) > 300_000:
+                            continue
+                        self._written[path] = text
+                        total += len(text)
+                        captured += 1
+                        continue
+                # binary path (by extension, or text decoding failed above)
+                raw = box.read_bytes(path)
+                if not raw or len(raw) > self._AUTO_CAPTURE_MAX_TOTAL_BYTES:
+                    continue
+                self._exported[path] = base64.b64encode(raw).decode("ascii")
+                total += len(raw)
+                captured += 1
+            except Exception:  # noqa: BLE001 - one bad file must not lose the rest
+                continue
+
     def _to_result(self, task: TaskSpec, run: Any) -> WorkerResult:
         result = super()._to_result(task, run)
+
+        # Safety net: a worker that writes files by shelling out to its own
+        # script (bypassing write_file/export_file) leaves quarantine nothing
+        # to rebuild from. Before that happens, discover and capture whatever
+        # is actually on disk that we don't already have.
+        self._auto_capture()
 
         # If a url artifact has no real URL, fill it from the last preview_port call.
         preview = None
@@ -282,6 +351,11 @@ class EngineeringWorker(Worker):
 def _basename(path: str) -> str:
     return path.rsplit("/", 1)[-1]
 
+
+_BINARY_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".pdf", ".zip", ".gz",
+    ".tar", ".woff", ".woff2", ".ttf", ".eot", ".mp3", ".mp4", ".wav", ".so", ".class",
+)
 
 _MIME_BY_EXT = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",

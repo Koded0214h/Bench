@@ -166,3 +166,80 @@ def test_unreferenced_exported_file_still_ships_as_artifact():
     result = worker.run(ENG_TASK)
     art = next(a for a in result.artifacts if a.value == "report.pdf")
     assert art.kind == "file" and art.meta["mime"] == "application/pdf"
+
+
+def test_auto_capture_discovers_files_written_outside_our_tools():
+    """A worker that generates everything via one shell script (bypassing
+    write_file/export_file) must still leave quarantine something to rebuild."""
+    solari = FakeSolari()
+    task = TaskSpec(title="Build page", capability="sandbox", instructions="build it",
+                    success_criteria=["serves"])
+    llm = FakeLLM([
+        call("run_command", {"cmd": "python3", "args": ["build.py"]}),
+        call("finish", {
+            "status": "done", "summary": "built the page",
+            "artifacts": [
+                {"kind": "url", "value": "https://sbx-8000.preview.getsolari.com", "label": "Landing page"},
+                {"kind": "file", "value": "logo.png", "label": "Logo"},
+            ],
+        }),
+    ])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+
+    def launch_and_seed(t):
+        box = real_launch(t)
+        box.find_output = "index.html\nlogo.png\nbuild.py\n"
+        box.files["index.html"] = "<html><body>Stride</body></html>"
+        box.binary_files["logo.png"] = b"\x89PNGrealbytes"
+        return box
+
+    worker._launch = launch_and_seed
+    result = worker.run(task)
+
+    by_value = {a.value: a for a in result.artifacts}
+    assert "index.html" in by_value
+    assert by_value["index.html"].meta["content"] == "<html><body>Stride</body></html>"
+    assert by_value["logo.png"].meta["content_b64"]
+    import base64
+    assert base64.b64decode(by_value["logo.png"].meta["content_b64"]) == b"\x89PNGrealbytes"
+    # the driver script itself is discovered too, since nothing already tracked it
+    assert "build.py" in by_value
+
+
+def test_auto_capture_skips_already_tracked_files():
+    solari = FakeSolari()
+    llm = FakeLLM([
+        call("write_file", {"path": "index.html", "content": "tracked"}),
+        call("finish", {"status": "done", "summary": "done", "artifacts": []}),
+    ])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+
+    def launch_and_seed(t):
+        box = real_launch(t)
+        box.find_output = "index.html\n"
+        return box
+
+    worker._launch = launch_and_seed
+    result = worker.run(task=ENG_TASK)
+    matches = [a for a in result.artifacts if a.value == "index.html"]
+    assert len(matches) == 1
+    assert matches[0].label == "written"          # from write_file's own export, not auto-capture
+    assert matches[0].meta["content"] == "tracked"  # not overwritten by the (empty) sandbox copy
+
+
+def test_auto_capture_never_crashes_when_find_fails():
+    solari = FakeSolari()
+    llm = FakeLLM([call("finish", {"status": "done", "summary": "done", "artifacts": []})])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+
+    def launch_and_break_find(t):
+        box = real_launch(t)
+        box.exec = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no find binary"))
+        return box
+
+    worker._launch = launch_and_break_find
+    result = worker.run(ENG_TASK)
+    assert result.status is WorkerStatus.DONE   # a broken auto-capture never fails the task

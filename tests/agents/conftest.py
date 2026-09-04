@@ -34,6 +34,7 @@ class FakeSandboxHandle:
         self.commands: list[str] = []
         self.files: dict[str, str] = {}
         self.binary_files: dict[str, bytes] = {}   # pre-seed for read_bytes in tests
+        self.find_output: str | None = None        # scripted `find` stdout, for auto-capture tests
 
     def __enter__(self):
         return self
@@ -46,12 +47,16 @@ class FakeSandboxHandle:
         self.commands.append(line)
         if cmd == "false":
             return SimpleNamespace(exitCode=1, stdout="", stderr="boom")
+        if cmd == "find" and self.find_output is not None:
+            return SimpleNamespace(exitCode=0, stdout=self.find_output, stderr="")
         return SimpleNamespace(exitCode=0, stdout=f"ran: {line}", stderr="")
 
     def write_text(self, path, data):
         self.files[path] = data
 
     def read_text(self, path):
+        if path in self.binary_files and path not in self.files:
+            raise UnicodeDecodeError("utf-8", b"", 0, 1, "simulated binary content")
         return self.files.get(path, "")
 
     def read_bytes(self, path):
