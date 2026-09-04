@@ -205,6 +205,20 @@ class EngineeringWorker(Worker):
 
     def _to_result(self, task: TaskSpec, run: Any) -> WorkerResult:
         result = super()._to_result(task, run)
+
+        # If a url artifact has no real URL, fill it from the last preview_port call.
+        preview = None
+        for ev in run.events:
+            if ev.kind == "tool_result" and ev.detail.get("name") == "preview_port":
+                import json as _json
+                try:
+                    preview = _json.loads(ev.detail.get("content", "")).get("url")
+                except Exception:  # noqa: BLE001
+                    pass
+        for art in result.artifacts:
+            if art.kind == "url" and not str(art.value).startswith("http") and preview:
+                art.value = preview
+
         # Export the files the worker wrote so quarantine can rebuild from data.
         existing = {a.value for a in result.artifacts if a.kind == "file"}
         for path, content in getattr(self, "_written", {}).items():
