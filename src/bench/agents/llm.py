@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Protocol, runtime_checkable
 
@@ -306,11 +308,15 @@ class OpenAICompatLLM:
         base_url: str,
         api_key: str | None = None,
         timeout_s: float = 120.0,
+        max_retries: int = 5,
         client: Any = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._max_retries = max_retries
+        self._sleep = sleep
         if client is not None:
             self._client = client
         else:
@@ -343,10 +349,17 @@ class OpenAICompatLLM:
             ]
             body["tool_choice"] = "auto"
 
-        try:
-            resp = self._client.post("/chat/completions", json=body)
-        except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"{self.base_url} call failed: {exc}") from exc
+        resp = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                resp = self._client.post("/chat/completions", json=body)
+            except Exception as exc:  # noqa: BLE001
+                raise LLMError(f"{self.base_url} call failed: {exc}") from exc
+            if resp.status_code == 429 and attempt < self._max_retries:
+                self._sleep(_retry_delay(resp, attempt))
+                continue
+            break
+        assert resp is not None
         if resp.status_code >= 400:
             raise LLMError(f"{self.base_url} returned {resp.status_code}: {resp.text[:400]}")
 
@@ -374,6 +387,27 @@ class OpenAICompatLLM:
         )
 
 
+def _retry_delay(resp: Any, attempt: int) -> float:
+    """Seconds to wait before retrying a 429 — Retry-After header, then the
+    'try again in Xs' hint in the body, then capped exponential backoff."""
+
+    headers = getattr(resp, "headers", {}) or {}
+    ra = headers.get("retry-after") or headers.get("Retry-After")
+    if ra:
+        try:
+            return min(30.0, float(ra))
+        except ValueError:
+            pass
+    try:
+        m = re.search(r"try again in ([\d.]+)\s*(ms|s)", resp.text)
+        if m:
+            secs = float(m.group(1)) / (1000 if m.group(2) == "ms" else 1)
+            return min(30.0, secs + 0.25)
+    except Exception:  # noqa: BLE001
+        pass
+    return min(30.0, 1.0 * (2 ** attempt))
+
+
 def _to_openai_message(m: Message) -> dict[str, Any]:
     if m.role == "tool":
         return {"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content}
@@ -396,7 +430,7 @@ def _to_openai_message(m: Message) -> dict[str, Any]:
 
 # provider -> (base_url, api-key env var, default free model)
 _PROVIDERS = {
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b"),
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "meta-llama/llama-3.3-70b-instruct:free"),
     "cerebras": ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "llama-3.3-70b"),
     "ollama": ("http://localhost:11434/v1", "", "llama3.1"),

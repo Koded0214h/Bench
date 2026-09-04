@@ -71,12 +71,14 @@ class CEO:
         *,
         company_context: str = "",
         max_steps: int = 4,
+        max_tokens: int = 4096,
         on_event: OnEvent | None = None,
         on_usage: OnUsage | None = None,
     ) -> None:
         self.llm = llm
         self.company_context = company_context.strip()
         self.max_steps = max_steps
+        self.max_tokens = max_tokens
         self._on_event = on_event
         self._on_usage = on_usage
 
@@ -103,7 +105,8 @@ class CEO:
         )
         run = run_agent(
             llm=self.llm, system=_DECOMPOSE_SYSTEM, prompt=prompt, tools=tools,
-            max_steps=self.max_steps, on_event=self._on_event, on_usage=self._on_usage,
+            max_steps=self.max_steps, max_tokens=self.max_tokens,
+            on_event=self._on_event, on_usage=self._on_usage,
         )
         if not run.result:
             raise ValueError(f"CEO did not submit a plan (stopped: {run.stopped}): {run.text[:200]}")
@@ -145,7 +148,8 @@ class CEO:
         )
         run = run_agent(
             llm=self.llm, system=_REVIEW_SYSTEM, prompt=prompt, tools=tools,
-            max_steps=self.max_steps, on_event=self._on_event, on_usage=self._on_usage,
+            max_steps=self.max_steps, max_tokens=self.max_tokens,
+            on_event=self._on_event, on_usage=self._on_usage,
         )
         if not run.result:
             raise ValueError(f"CEO did not submit a review (stopped: {run.stopped}): {run.text[:200]}")

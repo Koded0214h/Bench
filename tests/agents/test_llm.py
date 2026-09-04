@@ -176,7 +176,7 @@ def test_llm_from_env_openai_compat_routing(monkeypatch):
     llm = llm_from_env()
     assert isinstance(llm, OpenAICompatLLM)
     assert llm.base_url == "https://api.groq.com/openai/v1"
-    assert llm.model == "llama-3.3-70b-versatile"
+    assert llm.model == "openai/gpt-oss-120b"
 
     monkeypatch.setenv("BENCH_LLM_PROVIDER", "")
     monkeypatch.setenv("BENCH_LLM_BASE_URL", "http://localhost:1234/v1")

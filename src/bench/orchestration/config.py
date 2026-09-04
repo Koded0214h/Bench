@@ -34,6 +34,8 @@ class OrchestrationConfig:
     budget_estimate_usd: float = 0.10
     worker_max_steps: int = 16
     max_tasks: int = 8
+    #: Output-token cap per LLM call. Small values keep free-tier TPM budgets happy.
+    max_tokens: int = 2048
 
     @property
     def max_attempts(self) -> int:
@@ -45,6 +47,7 @@ class OrchestrationConfig:
             "retry_limit": _env_int("BENCH_RETRY_LIMIT", 2),
             "budget_estimate_usd": _env_float("BENCH_TASK_BUDGET_ESTIMATE_USD", 0.10),
             "worker_max_steps": _env_int("BENCH_WORKER_MAX_STEPS", 16),
+            "max_tokens": _env_int("BENCH_LLM_MAX_TOKENS", 2048),
         }
         values.update(overrides)
         return cls(**values)  # type: ignore[arg-type]

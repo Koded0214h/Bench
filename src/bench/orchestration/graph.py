@@ -42,6 +42,7 @@ class Deps:
     quarantine: Any
     sink: OrchestrationSink
     worker_max_steps: int = 16
+    max_tokens: int = 2048
 
     def usage_cb(self, task_id: str):
         return lambda model, u: self.meter.charge_llm(
@@ -117,7 +118,8 @@ def build_task_graph(deps: Deps):
                 deps.sink.on_machine(spec, worker_id, handle)
 
         worker = build_worker(spec, deps.llm, deps.solari, on_usage=deps.usage_cb(spec.id),
-                              on_machine=on_machine, max_steps=deps.worker_max_steps)
+                              on_machine=on_machine, max_steps=deps.worker_max_steps,
+                              max_tokens=deps.max_tokens)
         deps.audit.worker_hired(worker_id=worker_id, task_id=spec.id, capability=spec.capability.value)
         deps.sink.on_worker_hired(spec, worker_id)
         deps.sink.on_task_status(spec, TaskStatus.RUNNING, detail=f"attempt {state.get('attempts', 0) + 1}")
@@ -164,7 +166,8 @@ def build_task_graph(deps: Deps):
 
     def review_node(state: TaskState) -> dict:
         spec, result = state["spec"], state["worker_result"]
-        review = CEO(deps.llm, on_usage=deps.usage_cb(spec.id)).review(spec, result)
+        review = CEO(deps.llm, max_tokens=deps.max_tokens,
+                     on_usage=deps.usage_cb(spec.id)).review(spec, result)
         mapping = {"ACCEPT": TaskStatus.DONE, "REJECT": TaskStatus.REJECTED, "ESCALATE": TaskStatus.ESCALATED}
         status = mapping[review.verdict.value]
         deps.audit.task_state_changed(task_id=spec.id, to_state=status, reason=review.reason)

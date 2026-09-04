@@ -31,7 +31,8 @@ class Orchestrator:
         self.sink = sink or NullSink()
         self._deps = Deps(
             llm=llm, solari=solari, policy=policy, meter=meter, audit=audit,
-            quarantine=quarantine, sink=self.sink, worker_max_steps=self.config.worker_max_steps,
+            quarantine=quarantine, sink=self.sink,
+            worker_max_steps=self.config.worker_max_steps, max_tokens=self.config.max_tokens,
         )
         self.audit = audit
         self.llm = llm
@@ -43,6 +44,7 @@ class Orchestrator:
     def decompose(self, goal: str) -> Plan:
         ceo = CEO(
             self.llm, company_context=self.company_context,
+            max_tokens=self.config.max_tokens,
             on_usage=self._deps.usage_cb("__plan__"),
         )
         return ceo.decompose(goal, max_tasks=self.config.max_tasks)
