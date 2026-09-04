@@ -18,7 +18,7 @@ export interface Task {
   result: {
     status: string;
     summary: string;
-    artifacts: { kind: string; value: string; label: string }[];
+    artifacts: { kind: string; value: string; label: string; meta?: Record<string, unknown> }[];
     steps: number;
     usage: { input_tokens: number; output_tokens: number };
   } | null;

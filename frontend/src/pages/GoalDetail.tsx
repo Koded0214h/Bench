@@ -135,14 +135,11 @@ function TaskView({ t }: { t: Task }) {
       {t.result && (
         <div className="small" style={{ marginTop: 8 }}>
           <div className="muted">{t.result.summary}</div>
-          {t.result.artifacts
-            .filter((a) => a.kind !== "file")
-            .map((a, i) => (
-              <div key={i} className="mono">
-                [{a.kind}] {a.label}:{" "}
-                {a.value.startsWith("http") ? <a href={a.value} target="_blank" rel="noreferrer">{a.value}</a> : a.value}
-              </div>
+          <div className="stack" style={{ gap: 8, marginTop: 6 }}>
+            {t.result.artifacts.map((a, i) => (
+              <ArtifactView key={i} a={a} />
             ))}
+          </div>
         </div>
       )}
 
@@ -166,6 +163,56 @@ function TaskView({ t }: { t: Task }) {
           <span className="muted">{t.review.reason}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|bmp)(\?|#|$)/i;
+
+function ArtifactView({ a }: { a: NonNullable<Task["result"]>["artifacts"][number] }) {
+  const isUrl = a.value.startsWith("http");
+  const looksLikeImage = a.kind === "image" || (isUrl && IMAGE_EXT.test(a.value));
+  const content = typeof a.meta?.content === "string" ? a.meta.content : null;
+
+  if (looksLikeImage && isUrl) {
+    return (
+      <div>
+        <div className="muted mono" style={{ marginBottom: 4 }}>[image] {a.label || a.value}</div>
+        <a href={a.value} target="_blank" rel="noreferrer">
+          <img src={a.value} alt={a.label || "generated image"}
+               style={{ maxWidth: 320, maxHeight: 240, borderRadius: 8, border: "1px solid var(--line)" }} />
+        </a>
+      </div>
+    );
+  }
+
+  if (isUrl) {
+    return (
+      <div className="mono">
+        [{a.kind}] {a.label}: <a href={a.value} target="_blank" rel="noreferrer">{a.value}</a>
+      </div>
+    );
+  }
+
+  if (content) {
+    return (
+      <details>
+        <summary className="mono" style={{ cursor: "pointer" }}>
+          [{a.kind}] {a.label || a.value}
+        </summary>
+        <pre style={{
+          whiteSpace: "pre-wrap", background: "var(--bg)", border: "1px solid var(--line)",
+          borderRadius: 8, padding: 10, marginTop: 6, maxHeight: 320, overflow: "auto",
+        }}>
+          {content.slice(0, 6000)}
+        </pre>
+      </details>
+    );
+  }
+
+  return (
+    <div className="mono">
+      [{a.kind}] {a.label}: {a.value}
     </div>
   );
 }

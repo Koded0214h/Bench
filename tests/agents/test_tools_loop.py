@@ -95,3 +95,37 @@ def test_loop_reports_usage_per_call():
         on_usage=lambda model, usage: seen.append(usage.total_tokens),
     )
     assert seen == [14, 12]  # Usage(8,6) then Usage(8,4)
+
+
+# --- llm-error retry within a step ------------------------------------
+
+def test_loop_retries_llm_error_and_recovers():
+    from bench.agents import LLMError
+
+    calls_made = {"n": 0}
+
+    def script(messages, tools):
+        calls_made["n"] += 1
+        if calls_made["n"] < 3:
+            raise LLMError("tool call validation failed: hallucinated tool")
+        return say("all good now")
+
+    slept = []
+    run = run_agent(llm=FakeLLM(script), system="s", prompt="p", tools=_reg(),
+                    max_steps=5, sleep=slept.append)
+    assert run.stopped == StopReason.PLAIN_TEXT and run.text == "all good now"
+    assert calls_made["n"] == 3
+    assert len(slept) == 2
+    llm_errors = [e for e in run.events if e.kind == "llm_error"]
+    assert len(llm_errors) == 2 and llm_errors[0].detail["attempt"] == 1
+
+
+def test_loop_reraises_after_exhausting_llm_retries():
+    from bench.agents import LLMError
+
+    def script(messages, tools):
+        raise LLMError("still broken")
+
+    with pytest.raises(LLMError):
+        run_agent(llm=FakeLLM(script), system="s", prompt="p", tools=_reg(),
+                  max_steps=5, llm_retries=2, sleep=lambda s: None)

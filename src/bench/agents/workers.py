@@ -29,7 +29,7 @@ _FINISH = Tool(
                 "items": {
                     "type": "object",
                     "properties": {
-                        "kind": {"type": "string", "enum": ["url", "file", "record", "text"]},
+                        "kind": {"type": "string", "enum": ["url", "image", "file", "record", "text"]},
                         "value": {"type": "string"},
                         "label": {"type": "string"},
                     },
@@ -49,7 +49,15 @@ You are a worker with exactly one task and one machine. Do the task with the
 tools you have — do not describe what you would do, do it. When a deliverable
 exists (a running URL, a file, a created record), call finish and report it as an
 artifact. If you get stuck, call finish with status "failed" and say why.
-Keep going until you call finish."""
+Keep going until you call finish.
+
+Binary or generated assets (images, zips, anything not plain text) are useless
+as a local path — nobody can open them. Serve them: run a static server (e.g.
+`python3 -m http.server 8000`) over the directory that contains them, call
+preview_port to get the public base URL, then report each one as an artifact
+whose value is the FULL url (base url + the file's path), with kind "image" for
+pictures and kind "url" for anything else fetchable. Text files (markdown,
+html, code) are fine to report as kind "file" with just their path."""
 
 
 class Worker:

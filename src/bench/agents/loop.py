@@ -6,10 +6,11 @@ replies with plain text and no tool calls, or the step budget runs out.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .llm import LLMClient, Message, ToolCall, Usage
+from .llm import LLMClient, LLMError, Message, ToolCall, Usage
 from .tools import ToolRegistry, ToolResult
 
 OnEvent = Callable[["AgentEvent"], None]
@@ -57,6 +58,8 @@ def run_agent(
     on_event: OnEvent | None = None,
     on_usage: OnUsage | None = None,
     history: list[Message] | None = None,
+    llm_retries: int = 2,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> AgentRun:
     registry = tools or ToolRegistry()
     messages: list[Message] = list(history or [])
@@ -71,13 +74,25 @@ def run_agent(
 
     specs = registry.specs()
     for step in range(1, max_steps + 1):
-        response = llm.complete(
-            messages=messages,
-            system=system,
-            tools=specs or None,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        response = None
+        for local_try in range(llm_retries + 1):
+            try:
+                response = llm.complete(
+                    messages=messages,
+                    system=system,
+                    tools=specs or None,
+                    max_tokens=max_tokens,
+                    # Nudge sampling on retry so a malformed generation (e.g. a
+                    # hallucinated tool call) isn't just reproduced verbatim.
+                    temperature=min(0.7, temperature + 0.3 * local_try),
+                )
+                break
+            except LLMError as exc:
+                emit(AgentEvent("llm_error", step, {"error": str(exc)[:300], "attempt": local_try + 1}))
+                if local_try >= llm_retries:
+                    raise
+                sleep(1.0 * (local_try + 1))
+        assert response is not None
         total = total + response.usage
         if on_usage:
             on_usage(getattr(llm, "model", "?"), response.usage)
