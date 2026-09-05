@@ -12,10 +12,6 @@
     {
       "source": "/live",
       "destination": "https://api.bench.kodedlabs.com/live"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
     }
   ]
 }

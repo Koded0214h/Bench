@@ -61,7 +61,22 @@ export async function api<T = unknown>(
     res = await doFetch();
   }
   const text = await res.text();
-  const parsed = text ? JSON.parse(text) : null;
+
+  // A misrouted call (a proxy or rewrite serving the SPA shell where the API
+  // should be) comes back as HTML with a 200, and parsing it blind reports
+  // "unexpected character at line 1 column 1" — which says nothing about the
+  // actual problem. Fail with the status and content type instead.
+  let parsed: unknown = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const kind = res.headers.get("content-type") || "unknown content type";
+      throw new ApiError(res.status, {
+        detail: `Expected JSON from /api${path} but got ${kind} (HTTP ${res.status}).`,
+      });
+    }
+  }
   if (!res.ok) throw new ApiError(res.status, parsed);
   return parsed as T;
 }
