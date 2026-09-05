@@ -1,3 +1,9 @@
+// Where the backend lives. Empty in dev, where Vite proxies /api to Django;
+// set at build time for deployments served from a different origin than the
+// API (Vercel in front of api.bench.kodedlabs.com). CORS on the backend
+// already allows that origin.
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+
 const ACCESS = "bench.access";
 const REFRESH = "bench.refresh";
 
@@ -26,7 +32,7 @@ export class ApiError extends Error {
 async function refreshAccess(): Promise<boolean> {
   const { refresh } = getTokens();
   if (!refresh) return false;
-  const r = await fetch("/api/auth/token/refresh", {
+  const r = await fetch(`${API_BASE}/api/auth/token/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh }),
@@ -49,7 +55,7 @@ export async function api<T = unknown>(
       const { access } = getTokens();
       if (access) headers["Authorization"] = `Bearer ${access}`;
     }
-    return fetch(`/api${path}`, {
+    return fetch(`${API_BASE}/api${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,

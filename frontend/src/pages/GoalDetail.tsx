@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, API_BASE } from "../api";
 import type { Escalation, Goal, Machine, Paginated, Spend, Task } from "../types";
 
 const TASK_PILL: Record<string, string> = {
@@ -138,7 +138,7 @@ function TaskView({ t }: { t: Task }) {
           {hasHtmlFile(t.result.artifacts) && (
             <div style={{ marginTop: 8 }}>
               <div className="muted mono url-label">[site] persistent — served from the database, never expires</div>
-              <UrlChip url={`${window.location.origin}/sites/${t.id}/`} />
+              <UrlChip url={`${API_BASE || window.location.origin}/sites/${t.id}/`} />
             </div>
           )}
           <div className="stack" style={{ gap: 8, marginTop: 6 }}>
