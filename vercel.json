@@ -1,17 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://api.bench.kodedlabs.com/api/:path*"
-    },
-    {
-      "source": "/sites/:path*",
-      "destination": "https://api.bench.kodedlabs.com/sites/:path*"
-    },
-    {
-      "source": "/live",
-      "destination": "https://api.bench.kodedlabs.com/live"
-    }
+    { "source": "/api/(.*)", "destination": "https://api.bench.kodedlabs.com/api/$1" },
+    { "source": "/sites/(.*)", "destination": "https://api.bench.kodedlabs.com/sites/$1" },
+    { "source": "/live", "destination": "https://api.bench.kodedlabs.com/live" },
+    { "source": "/((?!api/|sites/|live).*)", "destination": "/index.html" }
   ]
 }
