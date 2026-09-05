@@ -51,15 +51,29 @@ exists (a running URL, a file, a created record), call finish and report it as a
 artifact. If you get stuck, call finish with status "failed" and say why.
 Keep going until you call finish.
 
-The sandbox and any preview_port URL are destroyed the moment you call finish —
-nothing on disk survives. For any binary deliverable (an image, a zip, anything
-not plain text) you MUST call export_file on it before finishing, or it is lost
-forever. Report it as an artifact whose value is that same path, with kind
-"image" for pictures and kind "file" otherwise. Text files (markdown, html,
-code) don't need export_file — report them as kind "file" with their path and
-they're captured automatically. preview_port is only for checking your work
-live while you're still running (e.g. does the page render) — it is not a way
-to hand off a deliverable."""
+If the deliverable is a web page or UI, design it like a real product, not a
+template exercise: a deliberate type scale (not every heading the same size
+jump), generous whitespace instead of cramming, a coherent restrained color
+palette (not default blue links on white), and real polish in small details —
+button/input states, spacing rhythm, an actual visual hierarchy. Avoid the
+generic look of a centered hero + three even feature cards + default system
+font — that reads as a placeholder, not a finished product. Prefer real CSS
+(via a CDN framework like Tailwind, or your own) over inline styles.
+
+If your task's deliverable is a running site or service, call preview_port and
+report its URL as a "url" artifact — that IS how you hand off a live URL, it is
+real and clickable. You have no accounts or credentials of your own, so never
+try to deploy anywhere outside this sandbox (GitHub Pages, Netlify, Vercel, a
+real domain, etc.) — if the task demands that, you cannot do it; call finish
+with status "failed" and say so rather than inventing a URL.
+
+The sandbox — and with it any preview_port URL — is destroyed the moment you
+call finish; nothing on disk survives. For any binary deliverable (an image, a
+zip, anything not plain text) you MUST call export_file on it before
+finishing, or it is lost forever. Report it as an artifact whose value is that
+same path, with kind "image" for pictures and kind "file" otherwise. Text
+files (markdown, html, code) don't need export_file — report them as kind
+"file" with their path and they're captured automatically."""
 
 
 class Worker:
@@ -235,7 +249,20 @@ class EngineeringWorker(Worker):
         return reg, None
 
     _AUTO_CAPTURE_SKIP_DIRS = ("./node_modules/*", "./.git/*", "./__pycache__/*",
-                              "./venv/*", "./.venv/*", "./dist/*", "./build/*", "./.next/*")
+                              "./venv/*", "./.venv/*", "./dist/*", "./build/*", "./.next/*",
+                              # the sandbox's default cwd is the container root on some
+                              # templates, not a project dir — without these, the scan
+                              # below happily walks the whole OS and "captures" it.
+                              "./etc/*", "./usr/*", "./var/*", "./bin/*", "./sbin/*",
+                              "./lib/*", "./lib32/*", "./lib64/*", "./proc/*", "./sys/*",
+                              "./dev/*", "./root/*", "./boot/*", "./opt/*", "./run/*",
+                              "./srv/*", "./mnt/*", "./media/*", "./snap/*")
+    # container/account markers that can sit anywhere (top-level, or under a
+    # home dir whose name we don't control) — matched by basename, not path.
+    _AUTO_CAPTURE_SKIP_NAMES = frozenset({
+        ".dockerenv", ".bashrc", ".bash_logout", ".bash_history", ".profile",
+        ".viminfo", ".wget-hsts", ".python_history", ".lesshst",
+    })
     _AUTO_CAPTURE_MAX_FILES = 30
     _AUTO_CAPTURE_MAX_TOTAL_BYTES = 2_000_000
 
@@ -270,6 +297,8 @@ class EngineeringWorker(Worker):
             if path in self._written or path in self._exported:
                 continue
             if path.endswith((".pyc", ".pyo", ".log")):
+                continue
+            if _basename(path) in self._AUTO_CAPTURE_SKIP_NAMES:
                 continue
 
             as_binary = path.lower().endswith(_BINARY_EXTENSIONS)
@@ -415,19 +444,23 @@ class ResearchWorker(_BrowserWorker):
 
 # --------------------------------------------------------------------------
 
-_WORKERS: dict[Capability, type[Worker]] = {
-    Capability.SANDBOX: EngineeringWorker,
-    Capability.BROWSER: OpsWorker,
-}
-
-
 def build_worker(task: TaskSpec, llm: LLMClient, solari: Any, **kw: Any) -> Worker:
-    """Pick a worker class for a task. A browser task with no `tool` and a
-    read-only feel still gets OpsWorker; use ResearchWorker explicitly for
-    read-only research."""
+    """Pick a worker class for a task: sandbox tasks get EngineeringWorker;
+    browser tasks get ResearchWorker when the CEO marked them read_only
+    (research, reading pages — no write-capable tools at all) and OpsWorker
+    otherwise. Desktop has no worker implementation yet — fail clearly rather
+    than silently handing it a sandbox, which would launch the wrong machine
+    entirely and confuse everyone about why."""
 
-    cls = _WORKERS.get(task.capability, EngineeringWorker)
-    return cls(llm, solari, **kw)
+    if task.capability is Capability.SANDBOX:
+        return EngineeringWorker(llm, solari, **kw)
+    if task.capability is Capability.BROWSER:
+        cls = ResearchWorker if task.read_only else OpsWorker
+        return cls(llm, solari, **kw)
+    raise NotImplementedError(
+        f"no worker implementation for capability {task.capability.value!r} yet "
+        "(desktop tasks aren't supported — this task should never have been planned)"
+    )
 
 
 def _task_prompt(task: TaskSpec) -> str:

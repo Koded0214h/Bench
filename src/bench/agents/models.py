@@ -39,6 +39,7 @@ class TaskSpec:
     success_criteria: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     tool: str | None = None                  # e.g. "salesforce" — a saved browser login
+    read_only: bool = False                  # browser tasks only: research, never writes
     context: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: _id("task"))
 
@@ -49,7 +50,8 @@ class TaskSpec:
         return {
             "id": self.id, "title": self.title, "capability": self.capability.value,
             "instructions": self.instructions, "success_criteria": list(self.success_criteria),
-            "depends_on": list(self.depends_on), "tool": self.tool, "context": dict(self.context),
+            "depends_on": list(self.depends_on), "tool": self.tool, "read_only": self.read_only,
+            "context": dict(self.context),
         }
 
     @classmethod
@@ -61,6 +63,7 @@ class TaskSpec:
             success_criteria=list(data.get("success_criteria") or []),
             depends_on=list(data.get("depends_on") or []),
             tool=data.get("tool"),
+            read_only=bool(data.get("read_only", False)),
             context=dict(data.get("context") or {}),
             id=str(data["id"]) if data.get("id") else _id("task"),
         )

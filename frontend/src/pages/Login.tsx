@@ -12,7 +12,7 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to="/companies" replace />;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

@@ -119,3 +119,27 @@ def test_policy_rules_listed_for_authed_user(auth_api, api):
     PolicyRule.objects.create(name="deny-x", match={"capability": "browser"}, effect="DENY", priority=0)
     assert auth_api.get("/api/policy/rules/").json()["count"] == 1
     assert api.get("/api/policy/rules/").status_code == 401
+
+
+# --- public demo status ------------------------------------------------
+
+def test_status_is_public_and_quiet_by_default(api):
+    r = api.get("/api/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["demo_paused"] is False
+    assert body["notice"] == "", "no notice unless the demo is actually paused"
+
+
+def test_status_reports_pause_with_default_notice(api, settings):
+    settings.BENCH_DEMO_PAUSED = True
+    settings.BENCH_DEMO_NOTICE = ""
+    body = api.get("/api/status").json()
+    assert body["demo_paused"] is True
+    assert "credits" in body["notice"]
+
+
+def test_status_uses_custom_notice(api, settings):
+    settings.BENCH_DEMO_PAUSED = True
+    settings.BENCH_DEMO_NOTICE = "Back on Monday."
+    assert api.get("/api/status").json()["notice"] == "Back on Monday."

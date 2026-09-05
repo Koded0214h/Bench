@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from bench.control_plane.api import views
 from bench.control_plane.api.auth import MeView, RegisterView
+from bench.control_plane.api.sites import task_site
 
 
 def spa_index(request, *args, **kwargs):
@@ -26,6 +27,7 @@ def spa_asset(request, path):
     return serve(request, path, document_root=settings.FRONTEND_DIST / "assets")
 
 router = DefaultRouter()
+router.register("companies", views.CompanyViewSet, basename="company")
 router.register("goals", views.GoalViewSet, basename="goal")
 router.register("tasks", views.TaskViewSet, basename="task")
 router.register("agents", views.AgentViewSet, basename="agent")
@@ -37,6 +39,7 @@ router.register("charges", views.ChargeViewSet, basename="charge")
 
 urlpatterns = [
     path("healthz", views.HealthView.as_view()),
+    path("api/status", views.StatusView.as_view()),
     path("live", views.live_view, name="live"),
     path("api/", include(router.urls)),
     path("api/audit", views.AuditView.as_view()),
@@ -46,8 +49,18 @@ urlpatterns = [
     path("api/auth/token", TokenObtainPairView.as_view()),
     path("api/auth/token/refresh", TokenRefreshView.as_view()),
     path("api/auth/me", MeView.as_view()),
-    # built React app
-    re_path(r"^app/assets/(?P<path>.*)$", spa_asset),
-    re_path(r"^app/.*$", spa_index),
-    path("", lambda r: HttpResponseRedirect("/app/")),
+    # a completed sandbox task's captured files, served as a real static site —
+    # survives long after the task's own sandbox (and its preview_port URL)
+    # has been torn down. Public: same shareability as the sandbox's own link.
+    path("sites/<str:task_id>/", task_site, {"path": ""}, name="task-site-index"),
+    re_path(r"^sites/(?P<task_id>[^/]+)/(?P<path>.+)$", task_site, name="task-site-asset"),
+    # legacy bookmarks
+    path("app/", lambda r: HttpResponseRedirect("/")),
+    re_path(r"^app/(?P<rest>.*)$", lambda r, rest: HttpResponseRedirect(f"/{rest}")),
+    # built React app — owns everything else, including the landing page at "/".
+    # Excludes api/healthz/live/admin/sites so a mistyped or slash-less request
+    # under those prefixes still 404s (or gets Django's slash-redirect) instead
+    # of silently returning the SPA shell.
+    re_path(r"^assets/(?P<path>.*)$", spa_asset),
+    re_path(r"^(?!api/|healthz|live|admin/|sites/).*$", spa_index),
 ]

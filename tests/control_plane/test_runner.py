@@ -9,7 +9,13 @@ from django.test import override_settings
 
 from bench.control_plane.api.models import Agent, Dispatch, Goal, Machine, Task
 
-pytestmark = pytest.mark.django_db
+# transaction=True: tasks within a goal now run on real threads (see
+# Orchestrator._run_tasks), each writing through its own DB connection. The
+# default django_db marker wraps a test in one open, uncommitted transaction
+# on the main thread's connection — a worker thread's separate connection can
+# neither see nor write past that, and sqlite deadlocks waiting for it to
+# release. transaction=True commits for real instead, like production does.
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 class FakeSandboxHandle:

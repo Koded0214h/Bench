@@ -51,8 +51,17 @@ class Deps:
 
 def _dispatch_for(spec) -> PolicyDispatch:
     cap = spec.capability.value
+    if cap == "sandbox":
+        action = None
+    else:
+        # Every browser task used to dispatch as "write" regardless of intent,
+        # so a read_only research task and a CRM-writing task looked identical
+        # to the policy engine. read_only is enforced for real at the tool
+        # level too (ResearchWorker's toolset has no click/type/submit at
+        # all) — this just lets policy rules see the difference.
+        action = "read" if spec.read_only else "write"
     return PolicyDispatch(
-        capability=cap, action="write" if cap != "sandbox" else None, tool=spec.tool,
+        capability=cap, action=action, tool=spec.tool,
         domain=f"{spec.tool}.com" if spec.tool else None,
         network="external" if cap == "sandbox" else None, task_id=spec.id, agent="ceo",
         purpose=spec.title,
@@ -96,7 +105,12 @@ def build_task_graph(deps: Deps):
             return {"status": TaskStatus.FAILED, "failure": str(exc), "attempts": attempts}
 
         try:
-            slot = deps.meter.acquire_worker(task_id=spec.id, blocking=False)
+            # Blocks until a slot frees rather than failing outright — with
+            # tasks now fanned out concurrently, a full pool is a queue to
+            # wait in, not a reason to give up on work that would otherwise
+            # succeed. (WorkerPoolFull only surfaces from a caller-supplied
+            # timeout now, not from the default wait.)
+            slot = deps.meter.acquire_worker(task_id=spec.id)
         except WorkerPoolFull as exc:
             deps.audit.task_state_changed(task_id=spec.id, to_state="failed", reason=str(exc))
             deps.sink.on_task_status(spec, TaskStatus.FAILED, detail=str(exc))
@@ -117,9 +131,18 @@ def build_task_graph(deps: Deps):
                                             task_id=spec.id, worker_id=worker_id)
                 deps.sink.on_machine(spec, worker_id, handle)
 
-        worker = build_worker(spec, deps.llm, deps.solari, on_usage=deps.usage_cb(spec.id),
-                              on_machine=on_machine, max_steps=deps.worker_max_steps,
-                              max_tokens=deps.max_tokens)
+        try:
+            worker = build_worker(spec, deps.llm, deps.solari, on_usage=deps.usage_cb(spec.id),
+                                  on_machine=on_machine, max_steps=deps.worker_max_steps,
+                                  max_tokens=deps.max_tokens)
+        except NotImplementedError as exc:
+            # e.g. a desktop task — no machine was ever launched, but the
+            # worker-pool slot was already taken above; release it or it
+            # leaks for the life of the process.
+            slot.release()
+            deps.audit.task_state_changed(task_id=spec.id, to_state="failed", reason=str(exc))
+            deps.sink.on_task_status(spec, TaskStatus.FAILED, detail=str(exc))
+            return {"status": TaskStatus.FAILED, "failure": str(exc), "attempts": attempts}
         deps.audit.worker_hired(worker_id=worker_id, task_id=spec.id, capability=spec.capability.value)
         deps.sink.on_worker_hired(spec, worker_id)
         deps.sink.on_task_status(spec, TaskStatus.RUNNING, detail=f"attempt {state.get('attempts', 0) + 1}")

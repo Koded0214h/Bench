@@ -57,6 +57,19 @@ rules:
     effect: AUDIT
     reason: "Reading the CRM is fine; kept in the trail for context."
 
+  - name: allow-research-reads
+    match:
+      capability: browser
+      action: read
+    effect: AUDIT
+    reason: >
+      Read-only browsing (market/competitor research, checking public pages)
+      is permitted anywhere and recorded. Safe by construction, not just
+      policy: a read_only task's worker has no click/type/submit tools at
+      all, so this can never turn into a write no matter what site it visits.
+      The explicit DENY rules above (social platforms, paste/upload sites)
+      still take precedence over this — DENY always beats ALLOW/AUDIT.
+
   # --- baseline allows -------------------------------------------
   - name: allow-isolated-compute
     match:

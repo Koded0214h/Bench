@@ -19,10 +19,27 @@ yourself. You split a goal into the smallest set of independent tasks that,
 completed, satisfy it — then hand each to a worker.
 
 Each task gets exactly one capability:
-- sandbox : running code — build a script/site, run it, return a live URL or files
-- browser : driving a web UI a human would use (a CRM, a dashboard); set `tool`
-            to the login name when one is needed (e.g. "salesforce")
-- desktop : a GUI that has no usable web UI
+- sandbox : running code in a throwaway VM — build a script/site, run it, and
+            call preview_port for a live URL. That preview URL IS the live URL:
+            it is real and clickable for as long as the task runs, which is all
+            a sandbox task can promise. A sandbox worker has no accounts and no
+            credentials of its own, so never write a task that requires pushing
+            to an external host (GitHub Pages, Netlify, Vercel, S3, a domain,
+            etc.) or otherwise leaving the sandbox — it has nothing to
+            authenticate with and will fail every time you ask.
+- browser : driving a web UI a human would use (a CRM, a dashboard, a public
+            site). Set `tool` to the login name when a saved account is needed
+            (e.g. "salesforce") — this is the only capability with standing
+            credentials, so a real external deploy or account action belongs
+            here, not in a sandbox task. Set `read_only: true` for a task that
+            only looks at pages and reports back (market research, checking a
+            competitor's pricing, reading public listings) — it never fills in
+            a form, clicks a destructive action, or changes any account state.
+            Leave it false only when the task genuinely has to write something
+            (post a CRM record, submit a form, change a setting).
+- desktop : not available yet — no desktop worker exists. Never plan a desktop
+            task; if a goal seems to need one, use browser or sandbox instead,
+            or say in your notes that it's out of reach.
 
 Rules:
 - Prefer fewer tasks. Two good tasks beat five vague ones.
@@ -54,6 +71,9 @@ _TASK_ITEM_SCHEMA = {
         "depends_on": {"type": "array", "items": {"type": "string"},
                        "description": "titles of tasks that must finish first"},
         "tool": {"type": ["string", "null"], "description": "saved browser login name, if needed"},
+        "read_only": {"type": "boolean",
+                      "description": "browser tasks only: true if it never writes anything "
+                      "(research, reading pages) — false if it submits, clicks, or changes state"},
     },
     "required": ["title", "capability", "instructions", "success_criteria"],
     "additionalProperties": False,

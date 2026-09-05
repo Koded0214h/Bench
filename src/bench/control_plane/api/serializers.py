@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import Agent, Charge, Dispatch, Escalation, Goal, Machine, PolicyRule, Task
+from .models import Agent, Charge, Company, Dispatch, Escalation, Goal, Machine, PolicyRule, Task
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+        fields = ["id", "name", "purpose", "focus", "autonomy", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -22,12 +29,14 @@ class GoalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Goal
-        fields = ["id", "owner", "text", "status", "notes", "error", "created_at", "updated_at", "tasks"]
+        fields = ["id", "owner", "company_id", "text", "status", "notes", "error",
+                  "created_at", "updated_at", "tasks"]
         read_only_fields = fields
 
 
 class GoalCreateSerializer(serializers.Serializer):
     text = serializers.CharField()
+    company = serializers.CharField(required=False, allow_blank=True, default="")
     run = serializers.BooleanField(required=False, default=None, allow_null=True)
 
 

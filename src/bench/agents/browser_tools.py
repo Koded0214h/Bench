@@ -17,6 +17,10 @@ from .tools import ToolRegistry, obj_schema
 _READ_LIMIT = 8000
 
 
+_CONNECT_TIMEOUT_MS = 45_000
+_NAV_TIMEOUT_MS = 30_000
+
+
 class BrowserToolset:
     def __init__(self, ws_endpoint: str, *, read_only: bool = False, playwright: Any = None) -> None:
         self.read_only = read_only
@@ -29,7 +33,11 @@ class BrowserToolset:
 
             self._pw = sync_playwright().start()
             self._owns_pw = True
-        self._browser = self._pw.chromium.connect(ws_endpoint)
+        # An explicit timeout, not just Playwright's own default: the target
+        # session can already be gone server-side (expired, crashed) by the
+        # time a worker connects to it, and without a bound here that hangs
+        # the task's thread — and the worker-pool slot it holds — forever.
+        self._browser = self._pw.chromium.connect(ws_endpoint, timeout=_CONNECT_TIMEOUT_MS)
         self._page = None
 
     # -- lifecycle --------------------------------------------------
@@ -49,9 +57,14 @@ class BrowserToolset:
 
     # -- actions --------------------------------------------------
 
-    def navigate(self, url: str, wait_until: str = "load") -> dict[str, Any]:
+    def navigate(self, url: str, wait_until: str = "domcontentloaded") -> dict[str, Any]:
+        # domcontentloaded, not load/networkidle: modern JS-heavy sites (React
+        # SPAs, analytics, chat widgets) often never go fully idle, and a
+        # worker just needs the page's text — not every last background
+        # request settled. An explicit timeout bounds a page that never
+        # fires the event at all, same reasoning as the connect() timeout.
         page = self._page_()
-        page.goto(url, wait_until=wait_until)
+        page.goto(url, wait_until=wait_until, timeout=_NAV_TIMEOUT_MS)
         return {"url": page.url, "title": page.title()}
 
     def read_page(self) -> dict[str, Any]:

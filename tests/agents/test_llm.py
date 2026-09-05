@@ -183,3 +183,84 @@ def test_llm_from_env_openai_compat_routing(monkeypatch):
     monkeypatch.setenv("BENCH_LLM_MODEL", "local-model")
     llm2 = llm_from_env()
     assert isinstance(llm2, OpenAICompatLLM) and llm2.model == "local-model"
+
+
+# --- deployment profile (BENCH_PROD) -----------------------------------
+
+_PROFILE_VARS = (
+    "BENCH_LLM_PROVIDER", "BENCH_LLM_MODEL", "BENCH_LLM_BASE_URL", "BENCH_LLM_API_KEY",
+    "BENCH_PROD", "BENCH_DEV_PROVIDER", "BENCH_DEV_MODEL",
+    "BENCH_PROD_PROVIDER", "BENCH_PROD_MODEL",
+)
+
+
+@pytest.fixture()
+def clean_profile(monkeypatch):
+    for v in _PROFILE_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or_test")
+    monkeypatch.setenv("OPENAI_API_KEY", "oai_test")
+    return monkeypatch
+
+
+def test_profile_defaults_to_free_when_prod_unset(clean_profile):
+    from bench.agents import OpenAICompatLLM
+    from bench.agents.llm import is_prod
+
+    assert is_prod() is False
+    llm = llm_from_env()
+    assert isinstance(llm, OpenAICompatLLM)
+    assert llm.base_url == "https://openrouter.ai/api/v1"
+    assert llm.model.endswith(":free")
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "on"])
+def test_prod_flag_selects_paid_gpt(clean_profile, raw):
+    from bench.agents import OpenAICompatLLM
+
+    clean_profile.setenv("BENCH_PROD", raw)
+    llm = llm_from_env()
+    assert isinstance(llm, OpenAICompatLLM)
+    assert llm.base_url == "https://api.openai.com/v1"
+    assert llm.model == "gpt-4o-mini"
+
+
+@pytest.mark.parametrize("raw", ["false", "0", "no", "", "  "])
+def test_non_truthy_prod_stays_free(clean_profile, raw):
+    clean_profile.setenv("BENCH_PROD", raw)
+    assert llm_from_env().model.endswith(":free")
+
+
+def test_each_profile_half_is_overridable(clean_profile):
+    clean_profile.setenv("BENCH_DEV_PROVIDER", "groq")
+    clean_profile.setenv("BENCH_DEV_MODEL", "openai/gpt-oss-120b")
+    clean_profile.setenv("GROQ_API_KEY", "gsk_test")
+    llm = llm_from_env()
+    assert llm.base_url == "https://api.groq.com/openai/v1"
+    assert llm.model == "openai/gpt-oss-120b"
+
+    clean_profile.setenv("BENCH_PROD", "true")
+    clean_profile.setenv("BENCH_PROD_MODEL", "gpt-4o")
+    assert llm_from_env().model == "gpt-4o"
+
+
+def test_explicit_pins_override_both_profiles(clean_profile):
+    """The escape hatch for a one-off run must beat the profile."""
+
+    clean_profile.setenv("BENCH_PROD", "false")
+    clean_profile.setenv("BENCH_LLM_PROVIDER", "openai")
+    clean_profile.setenv("BENCH_LLM_MODEL", "gpt-4o")
+    llm = llm_from_env()
+    assert llm.base_url == "https://api.openai.com/v1"
+    assert llm.model == "gpt-4o"
+
+
+def test_free_profile_model_is_priced_at_zero(clean_profile):
+    """The dev profile must cost nothing on the bundled rate card."""
+
+    from bench.metering.rates import default_rate_card
+
+    card = default_rate_card()
+    usd, key = card.llm_cost(llm_from_env().model, 1_000_000, 1_000_000)
+    assert key is not None, "dev model is missing from the rate card"
+    assert usd == 0.0

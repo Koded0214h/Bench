@@ -24,17 +24,32 @@ def load_dotenv(path: str | os.PathLike[str] | None = None) -> None:
         os.environ.setdefault(key, value)
 
 
-def llm_is_configured() -> bool:
-    """True when some LLM provider can be reached (any known key, or a local
-    endpoint / Ollama)."""
+def missing_llm_key() -> str | None:
+    """The env var the selected provider needs but doesn't have, else None.
 
-    keys = ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
-            "CEREBRAS_API_KEY", "OPENAI_API_KEY", "BENCH_LLM_API_KEY")
-    if any(os.environ.get(k) for k in keys):
-        return True
-    if os.environ.get("BENCH_LLM_BASE_URL"):
-        return True
-    return os.environ.get("BENCH_LLM_PROVIDER", "").strip().lower() == "ollama"
+    Deliberately narrow: it checks the provider BENCH_PROD (or an explicit pin)
+    actually selects, so a stale key for a different provider can't wave a run
+    through pre-flight and fail after a machine is already running.
+    """
+
+    import sys
+    from pathlib import Path
+
+    src = str(Path(__file__).resolve().parents[1])
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    from bench.agents.llm import required_key_var
+
+    var = required_key_var()
+    if var is None:
+        return None
+    return None if os.environ.get(var) else var
+
+
+def llm_is_configured() -> bool:
+    """True when the provider that will actually be used has a usable key."""
+
+    return missing_llm_key() is None
 
 
 def setup_django() -> None:

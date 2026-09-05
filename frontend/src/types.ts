@@ -1,5 +1,47 @@
 export type User = { id: number; username: string; email: string; date_joined: string };
 
+export interface Company {
+  id: string;
+  name: string;
+  purpose: string;
+  focus: string;
+  autonomy: "ask" | "auto";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Agent {
+  id: string;
+  kind: "management" | "worker";
+  role: string;
+  status: "active" | "dismissed";
+  capability: string | null;
+  task_id: string | null;
+  created_at: string;
+  dismissed_at: string | null;
+}
+
+export interface AuditEvent {
+  seq?: number;
+  event_id?: string;
+  ts: string;
+  kind: string;
+  actor?: string | null;
+  task_id?: string | null;
+  worker_id?: string | null;
+  machine_id?: string | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface PolicyRule {
+  name: string;
+  match: Record<string, unknown>;
+  effect: string;
+  reason: string | null;
+  enabled: boolean;
+  priority: number;
+}
+
 export type TaskStatus =
   | "created" | "dispatching" | "denied" | "escalated" | "running"
   | "quarantine" | "review" | "done" | "rejected" | "failed";
@@ -36,6 +78,7 @@ export interface Task {
 export interface Goal {
   id: string;
   owner: string | null;
+  company_id: string | null;
   text: string;
   status: "pending" | "planning" | "running" | "done" | "failed" | "blocked";
   notes: string;
