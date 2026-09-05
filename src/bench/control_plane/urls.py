@@ -26,6 +26,21 @@ def spa_index(request, *args, **kwargs):
 def spa_asset(request, path):
     return serve(request, path, document_root=settings.FRONTEND_DIST / "assets")
 
+
+def spa_root_file(request, filename):
+    """Serve a root-level file the SPA build emits from frontend/public.
+
+    og.png, apple-touch-icon.png, robots.txt and friends live at the root of
+    dist/, not under assets/. Without this the catch-all answers them with
+    index.html, so a crawler fetching og:image gets HTML back and the link
+    preview renders blank. Falls through to the SPA when no such file exists,
+    so a client-side route that happens to look like a filename still works.
+    """
+
+    if (settings.FRONTEND_DIST / filename).is_file():
+        return serve(request, filename, document_root=settings.FRONTEND_DIST)
+    return spa_index(request)
+
 router = DefaultRouter()
 router.register("companies", views.CompanyViewSet, basename="company")
 router.register("goals", views.GoalViewSet, basename="goal")
@@ -62,5 +77,7 @@ urlpatterns = [
     # under those prefixes still 404s (or gets Django's slash-redirect) instead
     # of silently returning the SPA shell.
     re_path(r"^assets/(?P<path>.*)$", spa_asset),
+    # One path segment with an extension, no slashes -> no traversal.
+    re_path(r"^(?P<filename>[\w][\w.\-]*\.[A-Za-z0-9]+)$", spa_root_file),
     re_path(r"^(?!api/|healthz|live|admin/|sites/).*$", spa_index),
 ]

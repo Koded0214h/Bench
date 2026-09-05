@@ -143,3 +143,26 @@ def test_status_uses_custom_notice(api, settings):
     settings.BENCH_DEMO_PAUSED = True
     settings.BENCH_DEMO_NOTICE = "Back on Monday."
     assert api.get("/api/status").json()["notice"] == "Back on Monday."
+
+
+# --- root-level SPA assets (og:image, touch icon) ----------------------
+
+def test_root_asset_is_served_not_swallowed_by_the_spa(api, settings, tmp_path):
+    """A crawler fetching og:image must get the PNG, not index.html."""
+
+    settings.FRONTEND_DIST = tmp_path
+    (tmp_path / "index.html").write_text("<html>spa</html>")
+    (tmp_path / "og.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    r = api.get("/og.png")
+    assert r.status_code == 200
+    assert b"".join(r.streaming_content).startswith(b"\x89PNG")
+
+
+def test_unknown_root_path_still_falls_through_to_the_spa(api, settings, tmp_path):
+    settings.FRONTEND_DIST = tmp_path
+    (tmp_path / "index.html").write_text("<html>spa</html>")
+
+    r = api.get("/not-a-real-file.png")
+    assert r.status_code == 200
+    assert b"spa" in b"".join(r.streaming_content)
