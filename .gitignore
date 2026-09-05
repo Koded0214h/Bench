@@ -23,3 +23,7 @@ venv/
 # Frontend
 /frontend/node_modules/
 /frontend/dist/
+
+# Editor / OS noise
+.DS_Store
+.vscode/

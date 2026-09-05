@@ -34,6 +34,31 @@ def escalation_id() -> str:
     return _uid("esc")
 
 
+def company_id() -> str:
+    return _uid("co")
+
+
+class Company(models.Model):
+    """An AI-run company owned by an account. Goals belong to a company."""
+
+    class Autonomy(models.TextChoices):
+        ASK = "ask"          # human sign-off on side-effecting work
+        AUTO = "auto"        # only escalate when policy forces it
+
+    id = models.CharField(primary_key=True, max_length=40, default=company_id, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="companies",
+                              on_delete=models.CASCADE)
+    name = models.CharField(max_length=120)
+    purpose = models.TextField(blank=True, default="")       # what it does
+    focus = models.TextField(blank=True, default="")         # what it should focus on
+    autonomy = models.CharField(max_length=8, choices=Autonomy.choices, default=Autonomy.ASK)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class Goal(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -46,6 +71,8 @@ class Goal(models.Model):
     id = models.CharField(primary_key=True, max_length=40, default=goal_id, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="goals",
                               on_delete=models.CASCADE, null=True)
+    company = models.ForeignKey(Company, related_name="goals", on_delete=models.CASCADE,
+                                null=True, blank=True)
     text = models.TextField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
     notes = models.TextField(blank=True, default="")

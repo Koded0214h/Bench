@@ -431,16 +431,87 @@ def _to_openai_message(m: Message) -> dict[str, Any]:
 # provider -> (base_url, api-key env var, default free model)
 _PROVIDERS = {
     "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b"),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "meta-llama/llama-3.3-70b-instruct:free"),
+    # NB: OpenRouter retires ":free" slugs without notice — llama-3.3-70b:free went
+    # paid-only. Verify with GET /api/v1/models before trusting this default.
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "minimax/minimax-m3:free"),
     "cerebras": ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "llama-3.3-70b"),
     "ollama": ("http://localhost:11434/v1", "", "llama3.1"),
     "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o-mini"),
 }
 
 
-def llm_from_env(model: str | None = None, **kwargs: Any) -> LLMClient:
+# Deployment profile -> (provider, model). BENCH_PROD=true buys quality; anything
+# else (the default) stays on a free tier, so day-to-day runs cost nothing. Each
+# half is overridable on its own via BENCH_DEV_* / BENCH_PROD_*, and
+# BENCH_LLM_PROVIDER / BENCH_LLM_MODEL still override both profiles outright.
+_PROFILES = {
+    False: ("BENCH_DEV_PROVIDER", "BENCH_DEV_MODEL", "openrouter", ""),
+    True: ("BENCH_PROD_PROVIDER", "BENCH_PROD_MODEL", "openai", "gpt-4o-mini"),
+}
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    return default if raw == "" else raw in _TRUTHY
+
+
+def is_prod() -> bool:
+    """True when BENCH_PROD asks for the paid profile. Default False."""
+
+    return _env_flag("BENCH_PROD", False)
+
+
+def profile_from_env() -> tuple[str, str]:
+    """The (provider, model) the current BENCH_PROD profile selects. An empty
+    model means "use the provider's own default" from ``_PROVIDERS``."""
+
+    provider_var, model_var, provider_default, model_default = _PROFILES[is_prod()]
+    provider = (os.environ.get(provider_var) or "").strip().lower() or provider_default
+    model = (os.environ.get(model_var) or "").strip() or model_default
+    return provider, model
+
+
+def _resolve_provider_model(model: str | None = None) -> tuple[str, str]:
+    """The (provider, model) pair the environment selects, before any client is
+    built. Shared by :func:`llm_from_env` and :func:`required_key_var` so a
+    pre-flight check can never disagree with what actually gets constructed."""
+
     provider = (os.environ.get("BENCH_LLM_PROVIDER") or "").strip().lower()
     model = model or os.environ.get("BENCH_LLM_MODEL") or ""
+
+    # Nothing pinned explicitly? Let the PROD profile choose. A bare BENCH_LLM_BASE_URL
+    # is still an explicit endpoint and keeps its own path below.
+    if not provider and not model and not os.environ.get("BENCH_LLM_BASE_URL"):
+        provider, model = profile_from_env()
+    return provider, model
+
+
+def required_key_var(model: str | None = None) -> str | None:
+    """The env var that must hold a key for the *selected* provider, or None
+    when no key is needed (Ollama, or an endpoint given its own key).
+
+    Checking "is any known key set?" is not good enough once BENCH_PROD picks
+    the provider: a leftover key for some other provider would pass pre-flight,
+    boot a machine, and only then fail on the first call.
+    """
+
+    provider, model = _resolve_provider_model(model)
+    if os.environ.get("BENCH_LLM_API_KEY"):
+        return None
+    if provider in _PROVIDERS:
+        return _PROVIDERS[provider][1] or None
+    if os.environ.get("BENCH_LLM_BASE_URL"):
+        return None
+    lowered = (model or "claude-sonnet-5").lower()
+    if provider == "gemini" or lowered.startswith(("gemini", "google")):
+        return "GEMINI_API_KEY"
+    return "ANTHROPIC_API_KEY"
+
+
+def llm_from_env(model: str | None = None, **kwargs: Any) -> LLMClient:
+    provider, model = _resolve_provider_model(model)
 
     # explicit OpenAI-compatible endpoint
     base_url = os.environ.get("BENCH_LLM_BASE_URL")
@@ -476,4 +547,5 @@ def tool_result_text(value: Any) -> str:
 __all__ = [
     "LLMClient", "LLMResponse", "Message", "ToolSpec", "ToolCall", "Usage", "LLMError",
     "AnthropicLLM", "GeminiLLM", "OpenAICompatLLM", "FakeLLM", "llm_from_env",
+    "is_prod", "profile_from_env", "required_key_var",
 ]

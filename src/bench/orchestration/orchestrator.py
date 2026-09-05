@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 from typing import Any
 
 from bench.agents import CEO
@@ -62,10 +63,7 @@ class Orchestrator:
 
         self.sink.on_plan(plan)
         run = GoalRun(goal=goal, plan_notes=plan.notes)
-
-        for spec in plan.ordered():
-            outcome = self.run_task(spec)
-            run.outcomes.append(outcome)
+        run.outcomes = self._run_tasks(plan)
 
         if any(o.status in (TaskStatus.ESCALATED, TaskStatus.DENIED) for o in run.outcomes):
             run.status = "blocked"
@@ -76,6 +74,48 @@ class Orchestrator:
         self.audit.task_state_changed(task_id=goal_id, to_state=run.status,
                                       reason=f"{len(run.outcomes)} task(s)")
         return run
+
+    def _run_tasks(self, plan: Plan) -> list[TaskOutcome]:
+        """Run every task in the plan, fanning independent ones out in
+        parallel — a task starts the moment everything in its own
+        ``depends_on`` has finished (successfully or not; a failed
+        dependency still unblocks it, same as the old sequential walk over
+        ``plan.ordered()`` did). Real concurrency is still capped by the
+        meter's worker-pool slots (and, underneath that, by whatever your
+        Solari account can actually run at once)."""
+
+        outcomes: dict[str, TaskOutcome] = {}
+        pending: dict[str, TaskSpec] = {t.id: t for t in plan.tasks}
+
+        def satisfied(t: TaskSpec) -> bool:
+            return all(dep in outcomes or plan.by_id(dep) is None for dep in t.depends_on)
+
+        with concurrent.futures.ThreadPoolExecutor(thread_name_prefix="bench-task") as pool:
+            futures: dict[concurrent.futures.Future, TaskSpec] = {}
+
+            def schedule_ready() -> None:
+                ready = [t for t in pending.values() if satisfied(t)]
+                if not ready and pending and not futures:
+                    # every remaining task is blocked on something that will
+                    # never finish (a dependency cycle, or a bad reference) —
+                    # run what's left rather than dropping it silently, the
+                    # same escape hatch Plan.ordered() uses on a cycle.
+                    ready = list(pending.values())
+                for t in ready:
+                    futures[pool.submit(self.run_task, t)] = t
+                    del pending[t.id]
+
+            schedule_ready()
+            while futures:
+                done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+                for fut in done:
+                    spec = futures.pop(fut)
+                    outcomes[spec.id] = fut.result()
+                schedule_ready()
+
+        # a stable, dependency-respecting order for the caller — scheduling
+        # order can otherwise vary run to run once tasks race each other.
+        return [outcomes[t.id] for t in plan.ordered() if t.id in outcomes]
 
     def run_task(self, spec: TaskSpec, *, skip_policy: bool = False) -> TaskOutcome:
         initial: TaskState = {

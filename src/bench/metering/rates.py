@@ -51,22 +51,33 @@ class RateCard:
 
     # -- llm --------------------------------------------------------
 
+    #: OpenRouter marks its zero-cost variants with this suffix.
+    FREE_SUFFIX = ":free"
+
     def resolve_model(self, model: str) -> str | None:
         """Match a model id to a rate key: exact, then the longest key that is a
-        prefix of the id (so ``claude-sonnet-5`` resolves to ``claude-sonnet``)."""
+        prefix of the id (so ``claude-sonnet-5`` resolves to ``claude-sonnet``).
+        Ids ending in ``:free`` resolve to that suffix, since their price is
+        known to be zero without needing a rate-card entry per model."""
 
         if model in self.llm:
             return model
         candidates = [k for k in self.llm if model.startswith(k)]
-        return max(candidates, key=len) if candidates else None
+        if candidates:
+            return max(candidates, key=len)
+        return self.FREE_SUFFIX if model.endswith(self.FREE_SUFFIX) else None
 
     def llm_cost(self, model: str, input_tokens: int, output_tokens: int) -> tuple[float, str | None]:
         """Returns ``(usd, matched_key)``. An unknown model costs 0.0 and returns
-        ``None`` as the key so the caller can flag it."""
+        ``None`` as the key so the caller can flag it. A ``:free`` model also
+        costs 0.0 but returns a key, because that zero is a real price, not a
+        gap in the rate card."""
 
         key = self.resolve_model(model)
         if key is None:
             return 0.0, None
+        if key == self.FREE_SUFFIX:
+            return 0.0, key
         return self.llm[key].cost(input_tokens, output_tokens), key
 
     # -- construction ---------------------------------------------

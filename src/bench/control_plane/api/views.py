@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.shortcuts import render
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -10,10 +11,11 @@ from rest_framework.views import APIView
 
 from bench.audit import AuditLog
 
-from .models import Agent, Charge, Dispatch, Escalation, Goal, Machine, PolicyRule, Task
+from .models import Agent, Charge, Company, Dispatch, Escalation, Goal, Machine, PolicyRule, Task
 from .serializers import (
     AgentSerializer,
     ChargeSerializer,
+    CompanySerializer,
     DispatchSerializer,
     EscalationResolveSerializer,
     EscalationSerializer,
@@ -42,17 +44,37 @@ def _owned_task_ids(user) -> set[str]:
 
 # --------------------------------------------------------------------------
 
+class CompanyViewSet(viewsets.ModelViewSet):
+    """Companies owned by the account. A goal belongs to one company."""
+
+    serializer_class = CompanySerializer
+
+    def get_queryset(self):
+        return Company.objects.filter(owner=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+
 class GoalViewSet(mixins.CreateModelMixin, mixins.ListModelMixin,
                   mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = GoalSerializer
 
     def get_queryset(self):
-        return Goal.objects.filter(owner=self.request.user).prefetch_related("tasks")
+        qs = Goal.objects.filter(owner=self.request.user).prefetch_related("tasks")
+        company = self.request.query_params.get("company")
+        if company:
+            qs = qs.filter(company_id=company)
+        return qs
 
     def create(self, request, *args, **kwargs):
         payload = GoalCreateSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
-        goal = Goal.objects.create(text=payload.validated_data["text"], owner=request.user)
+        company_id = payload.validated_data.get("company") or None
+        if company_id and not Company.objects.filter(id=company_id, owner=request.user).exists():
+            return Response({"detail": "unknown company"}, status=status.HTTP_400_BAD_REQUEST)
+        goal = Goal.objects.create(text=payload.validated_data["text"], owner=request.user,
+                                   company_id=company_id)
 
         from django.conf import settings
 
@@ -220,6 +242,32 @@ class HealthView(APIView):
 
     def get(self, request):
         return Response({"status": "ok"})
+
+
+DEMO_PAUSED_NOTICE = (
+    "The live demo is out of credits, so new runs are paused. "
+    "Everything else still works \u2014 have a look around."
+)
+
+
+class StatusView(APIView):
+    """Public demo status, read by the landing page.
+
+    Unauthenticated on purpose: the landing page is the one view a visitor sees
+    before signing in, and it needs to say so when starting a run would fail.
+    Flip BENCH_DEMO_PAUSED in the environment and restart \u2014 no rebuild.
+    """
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        paused = bool(getattr(settings, "BENCH_DEMO_PAUSED", False))
+        notice = (getattr(settings, "BENCH_DEMO_NOTICE", "") or "").strip()
+        return Response({
+            "demo_paused": paused,
+            "notice": (notice or DEMO_PAUSED_NOTICE) if paused else "",
+        })
 
 
 def live_view(request):

@@ -13,6 +13,17 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent  # repo root
 
+# Patchright/Playwright's *sync* API (used by BrowserToolset for ops/research
+# workers) leaves the calling thread reporting a "running" asyncio event loop
+# for the whole browser session — a quirk of how it bridges sync and async,
+# not real concurrent async DB access. Django's async-safety check can't tell
+# the difference and refuses every ORM call made on that thread meanwhile
+# (e.g. recording LLM spend mid-task), which made every browser-capability
+# task fail on its very first step. This is Django's own documented escape
+# hatch for exactly this false-positive case — must be set before any ORM
+# call happens on a Playwright-poisoned thread, so it goes here at import time.
+os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
+
 
 def _bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -68,7 +79,21 @@ def _database() -> dict:
         }
     default_path = os.environ.get("BENCH_DB_PATH", str(BASE_DIR / ".bench" / "db.sqlite3"))
     Path(default_path).parent.mkdir(parents=True, exist_ok=True)
-    return {"ENGINE": "django.db.backends.sqlite3", "NAME": default_path}
+    return {
+        "ENGINE": "django.db.backends.sqlite3", "NAME": default_path,
+        # Independent tasks within a goal now run on separate threads, each
+        # writing its own task/audit/machine rows — sqlite allows only one
+        # writer at a time, and without a busy timeout a second writer gets
+        # "database is locked" immediately instead of just waiting its turn.
+        "OPTIONS": {"timeout": 20},
+        # Django's sqlite test db defaults to a single ":memory:" database
+        # implicitly shared across every thread's connection — harmless for
+        # sequential tests, but it collides the instant two task threads
+        # write at once. A file-backed test db behaves like production:
+        # independent connections serialized by sqlite's own (now patient)
+        # file lock, instead of one connection object fought over by threads.
+        "TEST": {"NAME": str(Path(default_path).with_name("test_" + Path(default_path).name))},
+    }
 
 
 DATABASES = {"default": _database()}
@@ -120,3 +145,23 @@ CORS_ALLOWED_ORIGINS = [
 # on, or POST /api/goals/<id>/run explicitly.
 BENCH_AUTORUN = _bool("BENCH_AUTORUN", False)
 BENCH_FAKE_LLM = _bool("BENCH_FAKE_LLM", False)
+# Shown by the landing page when the demo can't actually run (credits gone).
+BENCH_DEMO_PAUSED = _bool("BENCH_DEMO_PAUSED", False)
+BENCH_DEMO_NOTICE = os.environ.get("BENCH_DEMO_NOTICE", "").strip()
+
+# Tasks within a goal now run concurrently on real threads (see
+# Orchestrator._run_tasks), each writing its own rows, while the dashboard
+# polls the API every couple seconds — real simultaneous reads and writes.
+# sqlite's default journal mode makes a writer exclude every reader, so that
+# combination reliably produces "database is locked" under load; WAL mode
+# lets reads proceed alongside a writer instead of queuing behind it. The
+# OPTIONS timeout above is what's left to fall back on for true writer-vs-
+# writer contention (two task threads committing at the same instant).
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    from django.db.backends.signals import connection_created  # noqa: E402
+
+    def _enable_sqlite_wal(sender, connection, **kwargs):
+        if connection.vendor == "sqlite":
+            connection.cursor().execute("PRAGMA journal_mode=WAL;")
+
+    connection_created.connect(_enable_sqlite_wal)

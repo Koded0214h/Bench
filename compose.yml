@@ -1,0 +1,19 @@
+name: bench
+
+services:
+  app:
+    build: .
+    image: bench-app
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      # Host 8001 because 8000 already belongs to file-depot-app-1 on this box.
+      # Bound to loopback: nothing reaches the app except nginx on the same host.
+      - "127.0.0.1:8001:8000"
+    volumes:
+      # The sqlite db, audit log and collected static live here — without this
+      # every redeploy would start from an empty database.
+      - bench-state:/app/.bench
+
+volumes:
+  bench-state:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from bench.agents import (
     Capability,
     EngineeringWorker,
@@ -106,6 +108,28 @@ def test_build_worker_picks_class_by_capability():
     assert isinstance(build_worker(ENG_TASK, llm, solari), EngineeringWorker)
     browser_task = TaskSpec(title="x", capability="browser", instructions="y", success_criteria=["z"])
     assert isinstance(build_worker(browser_task, llm, solari, toolset_factory=FakeToolset), OpsWorker)
+
+
+def test_build_worker_picks_research_worker_for_read_only_browser_tasks():
+    """A browser task the CEO marked read_only must get ResearchWorker (no
+    write-capable tools at all), not the default OpsWorker."""
+    solari = FakeSolari()
+    llm = FakeLLM([])
+    task = TaskSpec(title="x", capability="browser", instructions="y",
+                    success_criteria=["z"], read_only=True)
+    worker = build_worker(task, llm, solari, toolset_factory=FakeToolset)
+    assert isinstance(worker, ResearchWorker)
+
+
+def test_build_worker_rejects_desktop_cleanly():
+    """No desktop worker exists — build_worker must fail loudly, not
+    silently hand the task to EngineeringWorker (which would launch the
+    wrong kind of machine entirely)."""
+    solari = FakeSolari()
+    llm = FakeLLM([])
+    task = TaskSpec(title="x", capability="desktop", instructions="y", success_criteria=["z"])
+    with pytest.raises(NotImplementedError):
+        build_worker(task, llm, solari)
 
 
 def test_export_file_embeds_bytes_on_matching_artifact():
@@ -227,6 +251,57 @@ def test_auto_capture_skips_already_tracked_files():
     assert len(matches) == 1
     assert matches[0].label == "written"          # from write_file's own export, not auto-capture
     assert matches[0].meta["content"] == "tracked"  # not overwritten by the (empty) sandbox copy
+
+
+def test_auto_capture_excludes_system_dirs_from_scan():
+    """On a template whose default cwd is the container root, the safety-net
+    scan must not walk the whole OS — regression for the flow-test run that
+    came back with .dockerenv and etc/* files reported as worker output."""
+    solari = FakeSolari()
+    llm = FakeLLM([call("finish", {"status": "done", "summary": "done", "artifacts": []})])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+    seen_args: list[list[str]] = []
+
+    def launch_and_spy(t):
+        box = real_launch(t)
+        box.find_output = ""
+        real_exec = box.exec
+
+        def spying_exec(cmd, *, args=None, **kw):
+            if cmd == "find":
+                seen_args.append(list(args or []))
+            return real_exec(cmd, args=args, **kw)
+
+        box.exec = spying_exec
+        return box
+
+    worker._launch = launch_and_spy
+    worker.run(ENG_TASK)
+
+    assert seen_args, "auto-capture should have run `find`"
+    for system_dir in ("./etc/*", "./usr/*", "./var/*", "./proc/*", "./sys/*", "./dev/*"):
+        assert system_dir in seen_args[0], f"{system_dir} should be excluded from the scan"
+
+
+def test_auto_capture_skips_container_marker_files():
+    """.dockerenv sits at the container root, and account dotfiles can sit
+    under a home dir of any name — neither is excludable by path pattern, so
+    both need a basename-based skip."""
+    solari = FakeSolari()
+    llm = FakeLLM([call("finish", {"status": "done", "summary": "done", "artifacts": []})])
+    worker = EngineeringWorker(llm, solari, max_steps=8)
+    real_launch = worker._launch
+
+    def launch_and_seed(t):
+        box = real_launch(t)
+        box.find_output = ".dockerenv\nhome/sandbox/.bashrc\nhome/sandbox/.profile\n"
+        return box
+
+    worker._launch = launch_and_seed
+    result = worker.run(ENG_TASK)
+    captured = {a.value for a in result.artifacts}
+    assert not captured & {".dockerenv", "home/sandbox/.bashrc", "home/sandbox/.profile"}
 
 
 def test_auto_capture_never_crashes_when_find_fails():

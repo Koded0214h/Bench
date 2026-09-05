@@ -56,8 +56,8 @@ export function GoalDetail() {
     <>
       <div className="between" style={{ marginBottom: 16 }}>
         <div>
-          <Link to="/" className="small">← all goals</Link>
-          <h2 style={{ margin: "6px 0 0", textTransform: "none", letterSpacing: 0, fontSize: 18, color: "var(--fg)" }}>
+          <Link to=".." className="small">← Work</Link>
+          <h2 style={{ margin: "6px 0 0", textTransform: "none", letterSpacing: 0, fontSize: 18, color: "var(--ink)" }}>
             {goal.text}
           </h2>
           <div className="muted small mono">{goal.id}</div>
@@ -130,11 +130,17 @@ function TaskView({ t }: { t: Task }) {
         <span className={`pill ${TASK_PILL[t.status] || ""}`}>{t.status}</span>
         {t.attempts > 1 && <span className="pill">{t.attempts} attempts</span>}
       </div>
-      <div className="muted small">{t.instructions}</div>
+      <div className="muted small wrap">{t.instructions}</div>
 
       {t.result && (
         <div className="small" style={{ marginTop: 8 }}>
-          <div className="muted">{t.result.summary}</div>
+          <div className="muted wrap">{cleanSummary(t.result.summary)}</div>
+          {hasHtmlFile(t.result.artifacts) && (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted mono url-label">[site] persistent — served from the database, never expires</div>
+              <UrlChip url={`${window.location.origin}/sites/${t.id}/`} />
+            </div>
+          )}
           <div className="stack" style={{ gap: 8, marginTop: 6 }}>
             {t.result.artifacts.map((a, i) => (
               <ArtifactView key={i} a={a} />
@@ -163,6 +169,51 @@ function TaskView({ t }: { t: Task }) {
           <span className="muted">{t.review.reason}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// Workers occasionally stuff a whole finish() payload (JSON, artifacts and
+// all) into their own summary field instead of a plain sentence — when that
+// happens, show the sentence it actually meant, not the raw JSON dump.
+function cleanSummary(raw: string): string {
+  const s = raw.trim();
+  if (!s.startsWith("{")) return raw;
+  try {
+    const parsed = JSON.parse(s);
+    if (parsed && typeof parsed.summary === "string") return parsed.summary;
+  } catch {
+    // not JSON, or not the shape we expect — fall through and show as-is
+  }
+  return raw;
+}
+
+function hasHtmlFile(artifacts: NonNullable<Task["result"]>["artifacts"]): boolean {
+  return artifacts.some((a) => a.kind === "file" && /\.html?$/i.test(a.value));
+}
+
+function UrlChip({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard blocked (permissions, non-secure context) — the link
+      // itself is still selectable and openable, so nothing else to do.
+    }
+  }
+
+  return (
+    <div className="url-chip">
+      <a href={url} target="_blank" rel="noreferrer" className="mono url-chip-text" title={url}>
+        {url}
+      </a>
+      <button type="button" className="ghost url-chip-copy" onClick={copy}>
+        {copied ? "copied" : "copy"}
+      </button>
     </div>
   );
 }
@@ -201,8 +252,8 @@ function ArtifactView({ a }: { a: NonNullable<Task["result"]>["artifacts"][numbe
   if (looksLikeImage && isUrl) {
     return (
       <div>
-        <div className="muted mono" style={{ marginBottom: 4 }}>
-          [image] {a.label || a.value} <span className="warn">(live preview only — expires with the sandbox)</span>
+        <div className="muted mono wrap" style={{ marginBottom: 4 }}>
+          [image] {a.label || a.value} — <span style={{ color: "var(--warn)" }}>live preview only, expires with the sandbox</span>
         </div>
         <a href={a.value} target="_blank" rel="noreferrer">
           <img src={a.value} alt={a.label || "generated image"}
@@ -214,8 +265,14 @@ function ArtifactView({ a }: { a: NonNullable<Task["result"]>["artifacts"][numbe
 
   if (isUrl) {
     return (
-      <div className="mono">
-        [{a.kind}] {a.label}: <a href={a.value} target="_blank" rel="noreferrer">{a.value}</a>
+      <div>
+        <div className="muted mono url-label">
+          [{a.kind}] {a.label}
+          {a.kind === "url" && (a.label || "").toLowerCase().includes("preview") && (
+            <span style={{ color: "var(--warn)" }}> — live preview only, expires with the sandbox</span>
+          )}
+        </div>
+        <UrlChip url={a.value} />
       </div>
     );
   }
@@ -226,8 +283,8 @@ function ArtifactView({ a }: { a: NonNullable<Task["result"]>["artifacts"][numbe
         <summary className="mono" style={{ cursor: "pointer" }}>
           [{a.kind}] {a.label || a.value}
         </summary>
-        <pre style={{
-          whiteSpace: "pre-wrap", background: "var(--bg)", border: "1px solid var(--line)",
+        <pre className="wrap" style={{
+          whiteSpace: "pre-wrap", background: "var(--paper-2)", border: "1px solid var(--line)",
           borderRadius: 8, padding: 10, marginTop: 6, maxHeight: 320, overflow: "auto",
         }}>
           {content.slice(0, 6000)}

@@ -79,6 +79,28 @@ def test_default_policy_loads_and_covers_readme_examples():
     assert egress.allowed and egress.audit
 
 
+def test_default_policy_allows_readonly_browser_research_anywhere():
+    """A read_only task with no declared domain (open-ended research) must
+    still get through — it has no write-capable tools regardless of what
+    site it visits, so it shouldn't need a per-domain allowlist entry."""
+    engine = PolicyEngine.from_config(PolicyConfig())
+    read = engine.evaluate(Dispatch(capability="browser", action="read"))
+    assert read.allowed and read.audit
+
+    # a write task with the same (no) domain declared is still default-DENY —
+    # read_only is what unlocks this, not just "no domain constraint matched".
+    write = engine.evaluate(Dispatch(capability="browser", action="write"))
+    assert write.effect is Effect.DENY
+
+
+def test_default_policy_still_blocks_social_posting_even_if_read_only_somehow():
+    """The explicit DENY list must keep beating the broad research ALLOW —
+    order-independence means DENY wins regardless of rule position."""
+    engine = PolicyEngine.from_config(PolicyConfig())
+    decision = engine.evaluate(Dispatch(capability="browser", domain="x.com", action="read"))
+    assert decision.effect is Effect.DENY
+
+
 def test_disable_defaults_leaves_empty_set():
     engine = PolicyEngine.from_config(PolicyConfig(disable_defaults=True))
     assert len(engine.policy_set) == 0
